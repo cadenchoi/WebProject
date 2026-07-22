@@ -88,14 +88,16 @@ function initMap(containerId, onLocationSelect) {
 
     // 1. 주소-좌표 변환 (Kakao Geocoder)
     const geoResult = await reverseGeocodeKakao(lat, lon);
-    
+    // coord2Address 결과는 { address: {address_name,...}, road_address: {...} } 형태
+    const fullAddress = geoResult?.address?.address_name || geoResult?.road_address?.address_name || '';
+
     // 2. 브이월드 API 필지 경계 획득 (Flask Proxy)
-    const parcelResult = await queryAndDrawVWorldParcel(lat, lon, geoResult?.address_name);
+    const parcelResult = await queryAndDrawVWorldParcel(lat, lon, fullAddress);
 
     if (onLocationSelect) {
       onLocationSelect({
         lat, lng: lon,
-        displayName: geoResult?.address_name || '',
+        displayName: fullAddress,
         address: geoResult,
         parcel: parcelResult
       });
@@ -448,8 +450,251 @@ function getSelectedParcelsData() {
     jibuns: mergedAddress,
     count: parcels.length,
     dominantZone,
-    zonesMap
+    zonesMap,
+    siteDimensions: getSiteBoundingDimensions(parcels),
+    mergedGeom: mergeParcelGeoms(parcels)
   };
+}
+
+/** 선택된 필지들의 geom(MultiPolygon)을 하나의 MultiPolygon GeoJSON으로 합침 (/api/buildable-envelope 입력용) */
+function mergeParcelGeoms(parcels) {
+  const coords = [];
+  parcels.forEach(p => {
+    if (!p.geom) return;
+    if (p.geom.type === 'MultiPolygon') coords.push(...p.geom.coordinates);
+    else if (p.geom.type === 'Polygon') coords.push(p.geom.coordinates);
+  });
+  if (coords.length === 0) return null;
+  return { type: 'MultiPolygon', coordinates: coords };
+}
+
+/**
+ * 선택된 필지들의 폴리곤을 모두 감싸는 축정렬 바운딩박스를 구해
+ * 동서(E-W)·남북(N-S) 개략 치수(m)를 반환 (배치 시뮬레이션용 근사치)
+ */
+function getSiteBoundingDimensions(parcels) {
+  let minLat = Infinity, maxLat = -Infinity, minLon = Infinity, maxLon = -Infinity;
+
+  parcels.forEach(p => {
+    if (!p.geom || p.geom.type !== 'MultiPolygon') return;
+    p.geom.coordinates.forEach(polygon => {
+      polygon.forEach(ring => {
+        ring.forEach(([lon, lat]) => {
+          if (lat < minLat) minLat = lat;
+          if (lat > maxLat) maxLat = lat;
+          if (lon < minLon) minLon = lon;
+          if (lon > maxLon) maxLon = lon;
+        });
+      });
+    });
+  });
+
+  if (!isFinite(minLat) || !isFinite(minLon)) return null;
+
+  const midLat = (minLat + maxLat) / 2;
+  const mLat = 111320;
+  const mLon = 111320 * Math.cos(midLat * Math.PI / 180);
+
+  return {
+    widthEW: Math.round((maxLon - minLon) * mLon * 10) / 10,
+    depthNS: Math.round((maxLat - minLat) * mLat * 10) / 10,
+    bbox: { minLon, minLat, maxLon, maxLat }
+  };
+}
+
+/* ─────────────────────────────────────────────
+   10. 건축가능영역 산출 (도로/인접대지 이격) + 개략 배치 미리보기
+───────────────────────────────────────────── */
+let layoutPreviewPolygons = [];
+let edgeClassificationLines = [];
+let manualEdgeOverrides = {}; // { edgeIndex: 'road'|'adjacent' } 사용자 수동보정
+let lastEnvelopeEdges = null; // 가장 최근 /api/buildable-envelope 응답의 edges (수동보정 대상 조회용)
+
+function clearLayoutPreview() {
+  layoutPreviewPolygons.forEach(p => p.setMap(null));
+  layoutPreviewPolygons = [];
+}
+
+function clearEdgeClassification() {
+  edgeClassificationLines.forEach(l => l.setMap(null));
+  edgeClassificationLines = [];
+}
+
+/** 구역계 취소 시 배치 관련 상태를 모두 초기화 */
+function clearBuildableEnvelopeState() {
+  clearLayoutPreview();
+  clearEdgeClassification();
+  manualEdgeOverrides = {};
+  lastEnvelopeEdges = null;
+}
+
+/**
+ * 대지 폴리곤을 /api/buildable-envelope로 보내 변별 도로/인접대지 분류 + 1차 건축가능영역을 받아온다.
+ * onResult(envelopeGeojson, edges) 콜백으로 결과 전달 (main.js에서 calculate() 입력에 반영).
+ */
+async function fetchBuildableEnvelope(geom, roadSetback, adjacentSetback, onResult) {
+  if (!geom) { onResult(null, null); return; }
+  try {
+    const edgeOverrides = Object.entries(manualEdgeOverrides).map(([index, type]) => ({ index: Number(index), type }));
+    const resp = await fetch('/api/buildable-envelope', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ geom, roadSetback, adjacentSetback, edgeOverrides })
+    });
+    if (!resp.ok) throw new Error('buildable-envelope 요청 실패');
+    const data = await resp.json();
+    lastEnvelopeEdges = data.edges || null;
+    // 변 클릭으로 수동보정하면 같은 geom/setback으로 재조회 후 다시 콜백
+    drawEdgeClassification(data.edges, () => fetchBuildableEnvelope(geom, roadSetback, adjacentSetback, onResult));
+    onResult(data.envelope || null, data.edges || null);
+  } catch (err) {
+    console.warn('[건축가능영역 조회 실패]', err);
+    lastEnvelopeEdges = null;
+    onResult(null, null);
+  }
+}
+
+/**
+ * 변별 분류를 지도 위에 색상 점선으로 표시하고, 클릭하면 도로/인접대지 타입을 토글해
+ * 수동보정한 뒤 onToggle 콜백을 호출한다 (재조회·재계산 트리거용).
+ * 도로=파랑, 정북일조 면제 변(북측이 비주거지역)=초록, 그 외 인접대지=회색.
+ * 도로 변은 실측된 도로폭을 인포윈도우로 확인할 수 있다.
+ */
+function drawEdgeClassification(edges, onToggle) {
+  clearEdgeClassification();
+  if (!kakaoMap || !edges) return;
+
+  edges.forEach(edge => {
+    const path = [
+      new kakao.maps.LatLng(edge.p1[1], edge.p1[0]),
+      new kakao.maps.LatLng(edge.p2[1], edge.p2[0])
+    ];
+    const isRoad = edge.type === 'road';
+    const isNorthExempt = edge.isNorth && edge.northExempt;
+    const color = isRoad ? '#2563eb' : (isNorthExempt ? '#16a34a' : '#94a3b8');
+    const line = new kakao.maps.Polyline({
+      path,
+      strokeWeight: 4,
+      strokeColor: color,
+      strokeOpacity: 0.9,
+      strokeStyle: 'shortdash'
+    });
+    line.setMap(kakaoMap);
+    kakao.maps.event.addListener(line, 'click', () => {
+      manualEdgeOverrides[edge.index] = isRoad ? 'adjacent' : 'road';
+      if (onToggle) onToggle();
+    });
+    if (isRoad && edge.roadWidthM) {
+      const mid = new kakao.maps.LatLng((edge.p1[1] + edge.p2[1]) / 2, (edge.p1[0] + edge.p2[0]) / 2);
+      const label = new kakao.maps.CustomOverlay({
+        position: mid,
+        content: `<div style="background:#2563eb;color:#fff;font-size:11px;padding:2px 6px;border-radius:4px;white-space:nowrap;">도로폭 ${edge.roadWidthM}m</div>`,
+        yAnchor: 1.6
+      });
+      label.setMap(kakaoMap);
+      edgeClassificationLines.push(label);
+    }
+    edgeClassificationLines.push(line);
+  });
+}
+
+/**
+ * calculator.js의 layoutInfo를 받아 개략 주동 형상을 카카오맵 단지 표기 스타일로 지도에 표시한다.
+ * layoutInfo.rows[].segments가 있으면 동마다 세대수만큼 균등분할한 유닛 박스를(코어 구분 없이)
+ * 옅은 단색 배경 + 얇은 테두리로 그리고, 동 중앙에 "평형타입 공급면적평" 라벨을 표시한다.
+ * segments가 없으면(폴백) 건물 외곽만, 그마저 없으면(바운딩박스 폴백 경로) 단순 사각형을 그린다.
+ * 실제 매싱 설계가 아닌 개략 근사치 — 시각화용.
+ */
+function drawLayoutPreview(bbox, layoutInfo) {
+  clearLayoutPreview();
+  if (!kakaoMap || !layoutInfo || !layoutInfo.maxRows) return;
+
+  const hasSegments = Array.isArray(layoutInfo.rows) && layoutInfo.rows.length > 0 && layoutInfo.rows[0].segments;
+  const hasPolygonRows = Array.isArray(layoutInfo.rows) && layoutInfo.rows.length > 0 && layoutInfo.rows[0].pathLL;
+
+  if (hasSegments) {
+    layoutInfo.rows.forEach(row => {
+      row.segments.forEach(seg => {
+        const path = seg.pathLL.map(([lon, lat]) => new kakao.maps.LatLng(lat, lon));
+        const poly = new kakao.maps.Polygon({
+          path,
+          strokeWeight: 1,
+          strokeColor: '#b45309',
+          strokeOpacity: 0.8,
+          strokeStyle: 'solid',
+          fillColor: '#fdf1de',
+          fillOpacity: 0.85
+        });
+        poly.setMap(kakaoMap);
+        layoutPreviewPolygons.push(poly);
+      });
+      (row.buildingLabels || []).forEach(bl => {
+        const label = new kakao.maps.CustomOverlay({
+          position: new kakao.maps.LatLng(bl.positionLL[1], bl.positionLL[0]),
+          content: `<div style="background:rgba(255,255,255,0.92);color:#7c2d12;font-size:11px;font-weight:600;padding:1px 5px;border-radius:3px;white-space:nowrap;border:1px solid #b45309;">${bl.text}</div>`,
+          yAnchor: 0.5
+        });
+        label.setMap(kakaoMap);
+        layoutPreviewPolygons.push(label);
+      });
+    });
+    return;
+  }
+
+  if (hasPolygonRows) {
+    layoutInfo.rows.forEach(row => {
+      const path = row.pathLL.map(([lon, lat]) => new kakao.maps.LatLng(lat, lon));
+      const poly = new kakao.maps.Polygon({
+        path,
+        strokeWeight: 2,
+        strokeColor: '#f59e0b',
+        strokeOpacity: 0.9,
+        strokeStyle: 'shortdash',
+        fillColor: '#f59e0b',
+        fillOpacity: 0.1
+      });
+      poly.setMap(kakaoMap);
+      layoutPreviewPolygons.push(poly);
+    });
+    return;
+  }
+
+  // 폴백: 바운딩박스 기반 단순 사각형
+  if (!bbox) return;
+  const { minLon, minLat, maxLon, maxLat } = bbox;
+  const midLat = (minLat + maxLat) / 2;
+  const mLat = 111320;
+  const mLon = 111320 * Math.cos(midLat * Math.PI / 180);
+
+  const depthDeg = (layoutInfo.bldgDepth || 15) / mLat;
+  const gapDeg = (layoutInfo.buildingGap || 0) / mLat;
+  const northSetbackDeg = (layoutInfo.northSetback || 0) / mLat;
+  const northLimit = maxLat - northSetbackDeg;
+
+  for (let i = 0; i < layoutInfo.maxRows; i++) {
+    const rowStart = minLat + i * (depthDeg + gapDeg);
+    const rowEnd = rowStart + depthDeg;
+    if (rowEnd > northLimit) break;
+
+    const path = [
+      new kakao.maps.LatLng(rowStart, minLon),
+      new kakao.maps.LatLng(rowStart, maxLon),
+      new kakao.maps.LatLng(rowEnd, maxLon),
+      new kakao.maps.LatLng(rowEnd, minLon)
+    ];
+
+    const poly = new kakao.maps.Polygon({
+      path,
+      strokeWeight: 2,
+      strokeColor: '#f59e0b',
+      strokeOpacity: 0.9,
+      strokeStyle: 'shortdash',
+      fillColor: '#f59e0b',
+      fillOpacity: 0.1
+    });
+    poly.setMap(kakaoMap);
+    layoutPreviewPolygons.push(poly);
+  }
 }
 
 /* ─────────────────────────────────────────────

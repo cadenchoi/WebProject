@@ -28,7 +28,7 @@ python --version
 
 ### 2단계. 필요 라이브러리 설치
 ```bash
-pip install flask requests
+pip install -r requirements.txt
 ```
 
 ### 3단계. 서버 실행

@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>신영 상품개발팀 건축개요 툴</title>
+  <title>신영 엔지니어링본부 상품개발팀 건축개요자동화 툴</title>
   <meta name="description" content="대지를 선택하고 기본 정보만 입력하면 건폐율·용적률·연면적이 자동으로 계산되는 건축개요 생성 도구">
   <!-- Fonts -->
   <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -18,7 +18,7 @@
   {% endif %}
 
   <!-- Custom CSS -->
-  <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}?v=8">
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}?v=17">
 </head>
 <body>
 
@@ -27,8 +27,7 @@
   <div class="nav-brand">
     <img src="{{ url_for('static', filename='sinyoung_logo.png') }}" alt="신영" class="nav-logo-img">
     <div class="nav-brand-text">
-      <span class="nav-brand-company">신영</span>
-      <span class="nav-brand-team">상품개발팀 · 건축개요 툴</span>
+      <span class="nav-brand-single">신영 엔지니어링본부 상품개발팀 건축개요자동화 툴</span>
     </div>
   </div>
   <div class="nav-actions">
@@ -40,6 +39,42 @@
     </button>
   </div>
 </nav>
+
+<!-- ═══════════════════ 설계개요 배너 (구역계 확정 시 표시) ═══════════════════ -->
+<div class="overview-banner no-print" id="overview-banner">
+  <div class="ob-item">
+    <span class="ob-label">대지위치</span>
+    <span class="ob-value" id="ob-location">—</span>
+  </div>
+  <div class="ob-divider"></div>
+  <div class="ob-item">
+    <span class="ob-label">용도지역</span>
+    <span class="ob-value" id="ob-zone">—</span>
+  </div>
+  <div class="ob-divider"></div>
+  <div class="ob-item">
+    <span class="ob-label">대지면적</span>
+    <span class="ob-value" id="ob-land-area">—</span>
+  </div>
+  <div class="ob-divider"></div>
+  <div class="ob-item">
+    <span class="ob-label">건폐율</span>
+    <span class="ob-value" id="ob-bcr">—</span>
+  </div>
+  <div class="ob-divider"></div>
+  <div class="ob-item">
+    <span class="ob-label">용적률</span>
+    <span class="ob-value" id="ob-far">—</span>
+  </div>
+  <div class="ob-divider"></div>
+  <div class="ob-item">
+    <span class="ob-label">세대수</span>
+    <span class="ob-value" id="ob-households">—</span>
+  </div>
+  <button class="ob-view-btn" id="ob-view-btn" title="설계개요 미리보기 탭으로 이동">
+    <i class="fa-solid fa-file-lines"></i> 설계개요 보기
+  </button>
+</div>
 
 <!-- ═══════════════════ MAIN LAYOUT ═══════════════════ -->
 <div class="app-layout">
@@ -112,6 +147,18 @@
               <input type="number" id="local-far" class="field-input" placeholder="법정값 자동입력" step="0.1" min="0">
             </div>
           </div>
+
+          <!-- 조례 조경비율 / 주차대수비율 -->
+          <div class="field-row-2">
+            <div class="field-group">
+              <label class="field-label" for="local-green-ratio">조례 조경면적 비율 (%)<span class="optional-tag">선택</span></label>
+              <input type="number" id="local-green-ratio" class="field-input" placeholder="법정값(주거20%/상업15%) 자동입력" step="0.1" min="0" max="100">
+            </div>
+            <div class="field-group">
+              <label class="field-label" for="local-parking-ratio">조례 세대당 주차대수 (대/세대)<span class="optional-tag">선택</span></label>
+              <input type="number" id="local-parking-ratio" class="field-input" placeholder="법정 최소기준 자동입력" step="0.01" min="0">
+            </div>
+          </div>
         </div>
       </div>
 
@@ -176,6 +223,66 @@
             </div>
           </div>
 
+          <!-- 개략 배치 검토 -->
+          <div class="section-mini-title" style="margin-top:4px;"><i class="fa-solid fa-building"></i> 개략 배치 검토 <span class="optional-tag">대지 폴리곤 확정 시 자동</span></div>
+          <div class="field-row-2">
+            <div class="field-group">
+              <label class="field-label" for="local-north-setback-ratio">조례 정북이격 비율<span class="optional-tag">기본 0.5(H×0.5)</span></label>
+              <input type="number" id="local-north-setback-ratio" class="field-input" placeholder="0.5" step="0.05" min="0" max="2">
+            </div>
+            <div class="field-group">
+              <label class="field-label" for="local-building-gap-ratio">조례 인동간격 비율<span class="optional-tag">기본 0.5(H×0.5)</span></label>
+              <input type="number" id="local-building-gap-ratio" class="field-input" placeholder="0.5" step="0.05" min="0" max="2">
+            </div>
+          </div>
+          <div class="field-row-2">
+            <div class="field-group">
+              <label class="field-label" for="standard-building-depth">표준 동 깊이 (m)<span class="optional-tag">기본 15m</span></label>
+              <input type="number" id="standard-building-depth" class="field-input" placeholder="15" step="0.5" min="8" max="30">
+            </div>
+            <div class="field-group">
+              <label class="field-label" for="standard-unit-width">표준 세대 폭 (m)<span class="optional-tag">기본 9m</span></label>
+              <input type="number" id="standard-unit-width" class="field-input" placeholder="9" step="0.5" min="5" max="20">
+            </div>
+          </div>
+          <div class="field-row-2">
+            <div class="field-group">
+              <label class="field-label" for="local-road-setback">조례 도로 후퇴거리 (m)<span class="optional-tag">기본 2m</span></label>
+              <input type="number" id="local-road-setback" class="field-input" placeholder="2" step="0.5" min="0" max="10">
+            </div>
+            <div class="field-group">
+              <label class="field-label" for="local-adjacent-setback">조례 대지안의 공지 (m)<span class="optional-tag">기본 1.5m</span></label>
+              <input type="number" id="local-adjacent-setback" class="field-input" placeholder="1.5" step="0.5" min="0" max="10">
+            </div>
+          </div>
+          <div class="field-row-2">
+            <div class="field-group">
+              <label class="field-label" for="core-width">코어 폭 (m)<span class="optional-tag">기본 10m</span></label>
+              <input type="number" id="core-width" class="field-input" placeholder="10" step="0.5" min="5" max="20">
+            </div>
+            <div class="field-group">
+              <label class="field-label" for="unit-combo-mode">호수 조합</label>
+              <select id="unit-combo-mode" class="field-select">
+                <option value="auto">자동 (2~5호 중 최적)</option>
+                <option value="2">2호 고정</option>
+                <option value="3">3호 고정</option>
+                <option value="4">4호 고정</option>
+                <option value="5">5호 고정</option>
+              </select>
+            </div>
+          </div>
+          <div class="legal-mini-card" id="layout-sim-card">
+            <div class="legal-row"><span>대지 개략 치수 (동서×남북)</span><span id="layout-site-dim">필지 확정 대기</span></div>
+            <div class="legal-row"><span>정면 방향</span><span id="layout-front-direction">—</span></div>
+            <div class="legal-row"><span>적용된 정북이격 / 인동간격</span><span id="layout-setback-values">—</span></div>
+            <div class="legal-row"><span>배치 가능 동수</span><span id="layout-rows">—</span></div>
+            <div class="legal-row"><span>배치 기반 필요층수</span><span id="layout-required-floors">—</span></div>
+            <div class="legal-row" style="border-top:1px dashed var(--border); padding-top:6px; margin-top:2px;">
+              <span>법정 최고층수 상한</span><span id="layout-legal-max-floors">—</span>
+            </div>
+            <div class="legal-status" id="layout-status">구역계를 확정하면 자동 산정됩니다 (개략 근사치, 실시설계 시 재검토 필요)</div>
+          </div>
+
           <!-- 전용률 -->
           <div class="field-group">
             <label class="field-label" for="exclusive-ratio">
@@ -228,8 +335,23 @@
           <!-- 주차 계획 -->
           <div class="section-mini-title"><i class="fa-solid fa-square-parking"></i> 주차 계획</div>
 
-          <!-- 주차대수: 법정대수 × 배수 방식 -->
+          <!-- 주차대수 산정 방식 토글 -->
           <div class="field-group">
+            <label class="field-label">주차대수 산정 방식</label>
+            <div style="display:flex; gap:16px; font-size:0.85rem; color:var(--text-sub);">
+              <label style="display:flex; align-items:center; gap:6px; cursor:pointer;">
+                <input type="radio" name="parking-mode" id="parking-mode-multiplier" value="multiplier" checked style="width:auto;">
+                법정대수 × 배수
+              </label>
+              <label style="display:flex; align-items:center; gap:6px; cursor:pointer;">
+                <input type="radio" name="parking-mode" id="parking-mode-perunit" value="perUnit" style="width:auto;">
+                세대당 대수 직접입력
+              </label>
+            </div>
+          </div>
+
+          <!-- 주차대수: 법정대수 × 배수 방식 -->
+          <div class="field-group" id="parking-mode-multiplier-fields">
             <label class="field-label" for="parking-multiplier">
               계획 주차 배수 (법정대수 기준)
               <span class="optional-tag">기본 1.2배</span>
@@ -241,6 +363,15 @@
                 style="width:70px;" oninput="document.getElementById('parking-multiplier-range').value=this.value;">
               <span style="color:var(--text-muted); font-size:0.8rem;">배</span>
             </div>
+          </div>
+
+          <!-- 주차대수: 세대당 대수 직접입력 방식 -->
+          <div class="field-group" id="parking-mode-perunit-fields" style="display:none;">
+            <label class="field-label" for="parking-per-unit">
+              세대당 계획 주차대수
+              <span class="optional-tag">예: 1.3대/세대</span>
+            </label>
+            <input type="number" id="parking-per-unit" class="field-input" value="1.3" step="0.01" min="0.5" max="3">
           </div>
 
           <!-- 주차면적 단위 -->
@@ -261,11 +392,11 @@
           <!-- 법정 주차 계산 배지 -->
           <div class="legal-mini-card" id="parking-legal-card">
             <div class="legal-row">
-              <span>법정 주차대수</span>
+              <span>법정 주차대수 <span id="parking-legal-source" style="font-size:0.68rem; color:var(--text-muted);"></span></span>
               <span id="legal-parking-val">계산 대기</span>
             </div>
             <div class="legal-row">
-              <span>계획 주차대수 (법정×<span id="parking-mult-display">1.2</span>배)</span>
+              <span id="parking-plan-label">계획 주차대수 (법정×<span id="parking-mult-display">1.2</span>배)</span>
               <span id="actual-parking-val">0 대</span>
             </div>
             <div class="legal-row">
@@ -293,6 +424,18 @@
             </div>
           </div>
 
+          <!-- 세대당 평으로 직접 조절 (위 배수와 양방향 연동) -->
+          <div class="field-group">
+            <label class="field-label" for="amenity-target-py">
+              세대당 부대복리시설 목표
+              <span class="optional-tag">현재 <span id="amenity-current-py">—</span>평/세대</span>
+            </label>
+            <div style="display:flex; gap:8px; align-items:center;">
+              <input type="number" id="amenity-target-py" class="field-input" placeholder="예: 0.5" step="0.01" min="0">
+              <span style="color:var(--text-muted); font-size:0.8rem; white-space:nowrap;">평/세대</span>
+            </div>
+          </div>
+
           <!-- 법정 자동산정 결과 카드 -->
           <div class="legal-mini-card" id="amenity-auto-card" style="margin-bottom:12px;">
             <div class="legal-row" style="font-size:0.75rem; color:var(--accent); font-weight:600;">🏢 자동 산정 결과 (비워두면 아래 값으로 자동 반영)</div>
@@ -301,6 +444,7 @@
             <div class="legal-row"><span>경로당</span><span id="auto-senior-val">—</span></div>
             <div class="legal-row"><span>어린이집</span><span id="auto-kinder-val">—</span></div>
             <div class="legal-row"><span>주민공동시설(지하)</span><span id="auto-community-val">—</span></div>
+            <div class="legal-row"><span>작은도서관</span><span id="auto-library-val">—</span></div>
           </div>
 
           <!-- 직접 입력 (비워두면 자동값 적용) -->
@@ -339,34 +483,20 @@
               <input type="number" id="area-shop" class="field-input" placeholder="없으면 0" step="0.01" min="0">
             </div>
           </div>
-        </div>
-      </div>
 
-      <!-- 핵심 지표 요약 (항상 노출) -->
-      <div class="summary-panel">
-        <div class="summary-title">📊 핵심 지표 요약</div>
-        <div class="summary-grid">
-          <div class="summary-item" id="sum-bcr">
-            <div class="sum-label">건폐율</div>
-            <div class="sum-value" id="sum-val-bcr">—</div>
-            <div class="sum-limit" id="sum-limit-bcr">법정: —</div>
-            <div class="sum-bar-wrap"><div class="sum-bar" id="sum-bar-bcr"></div></div>
+          <!-- 공개공지 -->
+          <div class="section-mini-title" style="margin-top:20px;"><i class="fa-solid fa-square"></i> 공개공지 <span class="optional-tag">해당시에만 체크</span></div>
+          <div class="field-group">
+            <label class="field-label" style="display:flex; align-items:center; gap:8px; cursor:pointer;">
+              <input type="checkbox" id="openspace-target" style="width:auto;">
+              공개공지 설치 대상 (상업지역·준주거지역 등, 용도·규모별 해당여부는 조례 확인 필요)
+            </label>
           </div>
-          <div class="summary-item" id="sum-far">
-            <div class="sum-label">용적률</div>
-            <div class="sum-value" id="sum-val-far">—</div>
-            <div class="sum-limit" id="sum-limit-far">완화: —</div>
-            <div class="sum-bar-wrap"><div class="sum-bar" id="sum-bar-far"></div></div>
-          </div>
-          <div class="summary-item" id="sum-parking">
-            <div class="sum-label">주차대수</div>
-            <div class="sum-value" id="sum-val-parking">—</div>
-            <div class="sum-limit" id="sum-limit-parking">법정: —</div>
-          </div>
-          <div class="summary-item" id="sum-community">
-            <div class="sum-label">주민공동시설</div>
-            <div class="sum-value" id="sum-val-community">—</div>
-            <div class="sum-limit" id="sum-limit-community">의무: —</div>
+          <div class="field-row-2" id="openspace-fields" style="display:none;">
+            <div class="field-group">
+              <label class="field-label" for="local-openspace-ratio">조례 공개공지 비율 (%)<span class="optional-tag">기본 5%</span></label>
+              <input type="number" id="local-openspace-ratio" class="field-input" placeholder="5" step="0.1" min="0" max="10">
+            </div>
           </div>
         </div>
       </div>
@@ -376,6 +506,36 @@
 
   <!-- ── RIGHT CONTENT PANEL ── -->
   <main class="content-panel">
+
+    <!-- 핵심 지표 요약 (모든 탭 공통 상단 고정) -->
+    <div class="summary-panel top-summary-bar no-print">
+      <div class="summary-title">📊 핵심 지표 요약</div>
+      <div class="summary-grid">
+        <div class="summary-item" id="sum-bcr">
+          <div class="sum-label">건폐율</div>
+          <div class="sum-value" id="sum-val-bcr">—</div>
+          <div class="sum-limit" id="sum-limit-bcr">법정: —</div>
+          <div class="sum-bar-wrap"><div class="sum-bar" id="sum-bar-bcr"></div></div>
+        </div>
+        <div class="summary-item" id="sum-far">
+          <div class="sum-label">용적률</div>
+          <div class="sum-value" id="sum-val-far">—</div>
+          <div class="sum-limit" id="sum-limit-far">완화: —</div>
+          <div class="sum-bar-wrap"><div class="sum-bar" id="sum-bar-far"></div></div>
+        </div>
+        <div class="summary-item" id="sum-parking">
+          <div class="sum-label">주차대수</div>
+          <div class="sum-value" id="sum-val-parking">—</div>
+          <div class="sum-limit" id="sum-limit-parking">법정: —</div>
+        </div>
+        <div class="summary-item" id="sum-community">
+          <div class="sum-label">주민공동시설</div>
+          <div class="sum-value" id="sum-val-community">—</div>
+          <div class="sum-limit" id="sum-limit-community">의무: —</div>
+          <div class="sum-limit" id="sum-amenity-py">부대복리시설 세대당 — 평</div>
+        </div>
+      </div>
+    </div>
 
     <!-- 탭 바 -->
     <div class="tab-bar no-print">
@@ -538,11 +698,13 @@
                 <th class="align-center" colspan="2">주거공용</th>
                 <th class="align-center font-bold" rowspan="2">공급면적 (㎡)</th>
                 <th class="align-center" rowspan="2">공급면적 (평)</th>
+                <th class="align-center" rowspan="2">기타공용면적 (㎡)</th>
+                <th class="align-center font-bold" rowspan="2">계약면적 (㎡)</th>
                 <th class="align-center" rowspan="2">전용률</th>
               </tr>
               <tr>
                 <th class="align-center">벽체공유</th>
-                <th class="align-center">기타공용</th>
+                <th class="align-center">공용면적</th>
               </tr>
             </thead>
             <tbody id="unit-table-body">
@@ -648,6 +810,13 @@
                 <td class="align-center" id="lt-community-status">—</td>
               </tr>
               <tr>
+                <td>관리사무소</td>
+                <td>10+(세대수-50)×0.05㎡ (최소 10㎡)</td>
+                <td class="n-r" id="lt-office-legal">—</td>
+                <td class="n-r" id="lt-office-actual">—</td>
+                <td class="align-center" id="lt-office-status">—</td>
+              </tr>
+              <tr>
                 <td>경로당</td>
                 <td>150세대 이상: 50+(세대수×0.1)㎡</td>
                 <td class="n-r" id="lt-senior-legal">—</td>
@@ -656,14 +825,28 @@
               </tr>
               <tr>
                 <td>어린이집</td>
-                <td>300세대 이상: 30+(세대수×0.05×4.29)㎡</td>
+                <td>300~599세대: 세대수×0.1명×4.29㎡<br>600~999세대: (30+세대수×0.05)명×4.29㎡<br>1000세대 이상: 80명×4.29㎡ 이상</td>
                 <td class="n-r" id="lt-kinder-legal">—</td>
                 <td class="n-r" id="lt-kinder-actual">—</td>
                 <td class="align-center" id="lt-kinder-status">—</td>
               </tr>
               <tr>
+                <td>작은도서관</td>
+                <td>500세대 이상: 33㎡ 이상</td>
+                <td class="n-r" id="lt-library-legal">—</td>
+                <td class="n-r" id="lt-library-actual">—</td>
+                <td class="align-center" id="lt-library-status">—</td>
+              </tr>
+              <tr>
+                <td>주민운동시설</td>
+                <td>500세대 이상: 종목별 규격에 따른 면적(고정 산식 없음)</td>
+                <td class="n-r" id="lt-exercise-legal">—</td>
+                <td class="n-r">별도 확인 필요</td>
+                <td class="align-center" id="lt-exercise-status">—</td>
+              </tr>
+              <tr>
                 <td>어린이 놀이터</td>
-                <td>300세대 이상: 200+세대수×1㎡</td>
+                <td>150~299세대: 적정면적(고정 산식 없음)<br>300~999세대: 200+세대수㎡<br>1000세대 이상: 500+(세대수×0.7)㎡</td>
                 <td class="n-r" id="lt-playground-legal">—</td>
                 <td class="n-r">별도 확인 필요</td>
                 <td class="align-center">의무</td>
@@ -675,6 +858,20 @@
                 <td class="n-r">별도 확인 필요</td>
                 <td class="align-center">의무</td>
               </tr>
+              <tr>
+                <td>공개공지</td>
+                <td id="lt-openspace-std">대상 지정 시: 대지면적 × 조례비율(기본 5%)</td>
+                <td class="n-r" id="lt-openspace-legal">—</td>
+                <td class="n-r">별도 확인 필요</td>
+                <td class="align-center" id="lt-openspace-status">—</td>
+              </tr>
+              <tr>
+                <td>지하저수조</td>
+                <td>세대당 0.5톤 이상</td>
+                <td class="n-r" id="lt-watertank-legal">—</td>
+                <td class="n-r">별도 확인 필요</td>
+                <td class="align-center">의무</td>
+              </tr>
             </tbody>
           </table>
         </div>
@@ -682,6 +879,15 @@
         <p class="legal-note">
           <i class="fa-solid fa-triangle-exclamation"></i>
           위 기준은 주택건설기준 등에 관한 규정 및 국계법 기준이며, 지자체 조례나 지구단위계획에 따라 달라질 수 있습니다. 반드시 실무 담당자에게 재확인하세요.
+        </p>
+
+        <p class="legal-note">
+          <i class="fa-solid fa-circle-info"></i>
+          다음 항목은 공개 API로 자동 조회할 수 있는 데이터가 없어 이 툴이 자동 반영하지 못합니다. 반드시 별도로 확인하세요:
+          <br>· 가로구역별 최고높이 지정 여부 (지자체 고시)
+          <br>· 지구단위계획·정비계획상 최고높이/최고층수/최저높이 CAP 규제
+          <br>· 문화재보호구역(역사문화환경 보존지역) 앙각 규제
+          <br>· 군사기지 및 군사시설 보호구역(비행안전구역 등) 고도제한
         </p>
       </div>
     </div><!-- /tab-legal -->
@@ -696,9 +902,9 @@
 </div>
 
 <!-- JS 모듈 로드 순서 중요: zones → calculator → map → main -->
-<script src="{{ url_for('static', filename='js/zones.js') }}?v=8"></script>
-<script src="{{ url_for('static', filename='js/calculator.js') }}?v=8"></script>
-<script src="{{ url_for('static', filename='js/map.js') }}?v=8"></script>
-<script src="{{ url_for('static', filename='js/main.js') }}?v=8"></script>
+<script src="{{ url_for('static', filename='js/zones.js') }}?v=17"></script>
+<script src="{{ url_for('static', filename='js/calculator.js') }}?v=17"></script>
+<script src="{{ url_for('static', filename='js/map.js') }}?v=17"></script>
+<script src="{{ url_for('static', filename='js/main.js') }}?v=17"></script>
 </body>
 </html>
