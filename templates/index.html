@@ -326,6 +326,36 @@
             <div class="legal-status" id="layout-status">구역계를 확정하면 자동 산정됩니다 (개략 근사치, 실시설계 시 재검토 필요)</div>
           </div>
 
+          <!-- 정밀 최적화 (Python/Shapely, 회전각·층수 전수 탐색으로 법정 최대 수용력 산출) -->
+          <div class="legal-mini-card" id="optimize-massing-card" style="margin-top:8px;">
+            <div class="field-group" style="margin-bottom:8px;">
+              <label class="field-label" style="display:flex; align-items:center; gap:8px; cursor:pointer;">
+                <input type="checkbox" id="allow-over-50-floors" style="width:auto;">
+                50층 초과 허용 (체크하지 않으면 탐색 범위가 최고 50층으로 제한됩니다)
+              </label>
+            </div>
+            <button type="button" class="btn-optimize-massing" id="btn-optimize-massing">
+              <i class="fa-solid fa-wand-magic-sparkles"></i> 정밀 최적화 실행 (법정 최대 수용력 산출)
+            </button>
+            <div id="optimize-massing-result" style="display:none;">
+              <div class="legal-row" style="border-top:1px dashed var(--border); padding-top:8px; margin-top:8px;">
+                <span>산출된 최대 세대수</span><span id="opt-households">—</span>
+              </div>
+              <div class="legal-row"><span>채택 층수 / 회전각</span><span id="opt-floors-rot">—</span></div>
+              <div class="legal-row"><span>달성 용적률 (목표 대비)</span><span id="opt-far">—</span></div>
+              <div class="legal-row"><span>달성 건폐율</span><span id="opt-bcr">—</span></div>
+              <div class="legal-row"><span>예상 높이 (채광·일조 이격 산정 기준)</span><span id="opt-assumed-height">—</span></div>
+              <div id="opt-setback-wrap" style="border-top:1px dashed var(--border); padding-top:8px; margin-top:6px; display:none;">
+                <div style="font-size:12px; color:var(--text-muted); margin-bottom:4px;">변별 이격거리 (기준선 · 적용배수 · 요구거리 · 실제거리)</div>
+                <table class="shape-compare-table" id="opt-setback-table">
+                  <thead><tr><th>기준선</th><th>배수</th><th>요구거리</th><th>실제거리</th></tr></thead>
+                  <tbody id="opt-setback-body"></tbody>
+                </table>
+              </div>
+              <div class="legal-status" id="opt-status"></div>
+            </div>
+          </div>
+
           <!-- 전용률 -->
           <div class="field-group">
             <label class="field-label" for="exclusive-ratio">

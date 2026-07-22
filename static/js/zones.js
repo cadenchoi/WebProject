@@ -305,11 +305,13 @@ function getOrdinanceLimits(address, zoneName) {
 
   if (cityKey && ORDINANCES[cityKey] && ORDINANCES[cityKey][zoneName]) {
     const ord = ORDINANCES[cityKey][zoneName];
+    // 경기는 광역시/특별시가 아니라 도(道) — "경기시"가 아니라 "경기도"가 맞다
+    const cityLabel = cityKey === '경기' ? '경기도' : `${cityKey}시`;
     return {
       bcrMax: ord.bcrMax,
       farMax: ord.farMax,
       farBase: ord.farBase || Math.round(ord.farMax * 0.7),
-      source: `${cityKey}시 조례`
+      source: `${cityLabel} 조례`
     };
   }
 

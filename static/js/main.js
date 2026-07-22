@@ -381,6 +381,10 @@ function bindEvents() {
     });
   }
 
+  // 정밀 최적화(Python) 실행 버튼
+  const btnOptimize = document.getElementById('btn-optimize-massing');
+  if (btnOptimize) btnOptimize.addEventListener('click', runOptimizeMassing);
+
   // 호수 조합 선택 → 재계산
   const unitComboMode = document.getElementById('unit-combo-mode');
   if (unitComboMode) unitComboMode.addEventListener('change', recalculate);
@@ -633,10 +637,10 @@ function recalculate() {
 function updateSummaryPanel(r) {
   const g = id => document.getElementById(id);
 
-  // 건폐율
+  // 건폐율 (배치 시뮬레이션이 있으면 실측 배치 기반, 없으면 지상연면적/층수 추정치)
   const bcrPct = r.calculatedBcr.toFixed(1) + '%';
   g('sum-val-bcr').textContent = bcrPct;
-  g('sum-limit-bcr').textContent = `법정: ${r.legalBcrMax}% 이하`;
+  g('sum-limit-bcr').textContent = `법정: ${r.legalBcrMax}% 이하` + (r.bcrIsGeometric ? ' (배치 실측)' : ' (추정치)');
   const bcrRatio = Math.min(r.calculatedBcr / r.legalBcrMax, 1);
   g('sum-bar-bcr').style.width = (bcrRatio * 100) + '%';
   g('sum-bcr').className = 'summary-item ' + (r.bcrOk ? 'ok' : 'ng');
@@ -781,6 +785,7 @@ function updateLayoutSimCard(r) {
   renderCompareTable(r.layoutInfo.strategyComparison);
 
   if (typeof drawLayoutPreview === 'function') {
+    stampFloorCountOnLabels(r.layoutInfo, r.aboveFloors);
     drawLayoutPreview(dims.bbox, r.layoutInfo);
   }
 
@@ -795,6 +800,164 @@ function updateLayoutSimCard(r) {
     statusEl.textContent = `✔ ${source} 기반 산정 적용됨 (지상 ${r.aboveFloors}층) — 지도의 변을 클릭하면 도로/인접대지 분류를 수동보정할 수 있습니다. 개략 근사치, 실시설계 시 재검토 필요`;
     statusEl.className = 'legal-status ok';
   }
+}
+
+/** 지도에 그리기 직전, 각 동 라벨 끝에 "· N층"을 붙인다(JS 개략/Python 최적화 결과 공통 사용). */
+function stampFloorCountOnLabels(layoutInfo, floors) {
+  if (!layoutInfo || !floors || !Array.isArray(layoutInfo.rows)) return;
+  const suffix = ` · ${floors}층`;
+  layoutInfo.rows.forEach(row => {
+    (row.buildingLabels || []).forEach(bl => {
+      if (!bl.text.endsWith(suffix)) bl.text += suffix;
+    });
+  });
+}
+
+/* ═══════════════════════════════════════════════════
+   8-2. 정밀 최적화(Python/Shapely) 실행 — 회전각·층수 전수 탐색으로
+   목표 세대수는 참고하지 않고 이 대지의 법정 최대 수용력을 산출한다.
+   기존 실시간 개략 계산(JS)은 그대로 두고, 버튼을 눌렀을 때만 opt-in으로 호출한다
+   (연산이 수십ms~2초 걸릴 수 있어 매 입력마다 자동 실행하지 않음).
+   ═══════════════════════════════════════════════════ */
+async function runOptimizeMassing() {
+  const btn = document.getElementById('btn-optimize-massing');
+  const resultBox = document.getElementById('optimize-massing-result');
+  const statusEl = document.getElementById('opt-status');
+  if (!btn || !resultBox || !statusEl) return;
+
+  if (!state.buildableEnvelope || !state.envelopeEdges) {
+    alert('먼저 지도에서 대지를 선택하고 "구역계 확정"을 눌러주세요.');
+    return;
+  }
+  if (!lastResult || !lastResult.totalHouseholds) {
+    alert('세대 타입과 세대수를 먼저 입력해주세요 (평균 전용면적 산정에 필요합니다).');
+    return;
+  }
+
+  const r = lastResult;
+  const inputs = buildCalcInputs();
+  const areaScale = (r.layoutInfo && r.layoutInfo.areaScale) || 1;
+  const avgFarAreaPerHousehold = r.totalHouseholds > 0 ? r.farBaseArea / r.totalHouseholds : 0;
+
+  const payload = {
+    buildableEnvelope: state.buildableEnvelope,
+    envelopeEdges: state.envelopeEdges,
+    unitTypeList: (r.unitDetails || []).filter(t => t.count > 0).map(t => ({ name: t.name, supplyArea: t.supplyArea, count: t.count })),
+    standardBuildingDepth: (inputs.standardBuildingDepth || 10) * areaScale,
+    standardUnitWidth: (inputs.standardUnitWidth || 15) * areaScale,
+    coreWidth: inputs.coreWidth,
+    unitComboMode: inputs.unitComboMode,
+    buildingShapeMode: inputs.buildingShapeMode,
+    northSetbackRatio: inputs.northSetbackRatio,
+    buildingGapRatio: inputs.buildingGapRatio,
+    floorHeight1Mm: inputs.floorHeight1Mm,
+    floorHeight2Mm: inputs.floorHeight2Mm,
+    floorHeight3Mm: inputs.floorHeight3Mm,
+    floorHeightTypicalMm: inputs.floorHeightTypicalMm,
+    landArea: r.landArea,
+    legalBcrMax: r.legalBcrMax,
+    legalFarMax: r.legalFarMax,
+    relaxedFarLimit: r.relaxedFarLimit,
+    avgFarAreaPerHousehold,
+    allowOver50Floors: document.getElementById('allow-over-50-floors')?.checked || false
+  };
+
+  const originalBtnHtml = btn.innerHTML;
+  btn.disabled = true;
+  btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> 탐색 중...';
+  resultBox.style.display = 'none';
+
+  const result = await fetchOptimizedMassing(payload);
+
+  btn.disabled = false;
+  btn.innerHTML = originalBtnHtml;
+  resultBox.style.display = 'block';
+
+  const hEl = document.getElementById('opt-households');
+  const frEl = document.getElementById('opt-floors-rot');
+  const farEl = document.getElementById('opt-far');
+  const bcrEl = document.getElementById('opt-bcr');
+  const heightEl = document.getElementById('opt-assumed-height');
+  const setbackWrap = document.getElementById('opt-setback-wrap');
+  const setbackBody = document.getElementById('opt-setback-body');
+
+  if (result.error || result.noFit) {
+    if (hEl) hEl.textContent = '—';
+    if (frEl) frEl.textContent = '—';
+    if (farEl) farEl.textContent = '—';
+    if (bcrEl) bcrEl.textContent = '—';
+    if (heightEl) heightEl.textContent = '—';
+    if (setbackWrap) setbackWrap.style.display = 'none';
+    if (result.noFit && result.searchStats && result.searchStats.candidatesRejectedByValidation > 0) {
+      statusEl.textContent = `⚠ 용적률·건폐율 조건은 만족하는 배치가 ${result.searchStats.candidatesRejectedByValidation}건 있었지만, 인동간격·채광사선·정북일조 이격을 만족하지 못해 모두 제외됐습니다 — 조례 이격거리·세대폭·코어폭을 조정해보세요`;
+    } else {
+      statusEl.textContent = result.error ? `⚠ 오류: ${result.error}` : '⚠ 이 대지/조건에서는 배치 가능한 조합을 찾지 못했습니다 — 조례 이격거리·세대폭·코어폭을 조정해보세요';
+    }
+    statusEl.className = 'legal-status ng';
+    return;
+  }
+
+  if (hEl) hEl.textContent = `${result.achievedHouseholds.toLocaleString()} 세대`;
+  if (frEl) frEl.textContent = `${result.chosenFloors}층 / 회전 ${result.rotationDeg}도`;
+  if (farEl) farEl.textContent = `${result.achievedFar}% (목표 ${result.farCapTarget}%)`;
+  if (bcrEl) bcrEl.textContent = `${result.achievedBcr}% (법정 ${r.legalBcrMax}% 이하)`;
+  if (heightEl) heightEl.textContent = result.assumedHeightM ? `${result.assumedHeightM}m (${result.chosenFloors}층 기준)` : '—';
+
+  if (setbackWrap && setbackBody) {
+    const details = result.setbackReport || [];
+    if (details.length === 0) {
+      setbackWrap.style.display = 'none';
+    } else {
+      setbackWrap.style.display = 'block';
+      setbackBody.innerHTML = details.map(d => {
+        let refLabel = d.referenceLine;
+        if (d.type === 'road') refLabel += ` (도로폭 ${d.roadWidthM}m, 절반 크레딧 ${d.roadCenterlineCreditM}m)`;
+        if (d.exempted) return `<tr><td>${refLabel}</td><td colspan="3">면제 (북측 비주거지역)</td></tr>`;
+        const ratioText = `${d.ratio}배`;
+        const requiredText = `${d.requiredSetbackM}m`;
+        const actualText = d.actualDistanceM != null ? `${d.actualDistanceM}m` : '—';
+        return `<tr><td>${refLabel}</td><td>${ratioText}</td><td>${requiredText}</td><td>${actualText}</td></tr>`;
+      }).join('');
+    }
+  }
+
+  // 인동간격·채광사선(도로중심선 기준 포함)·정북일조 이격에 저촉하는 후보는 탐색 단계에서
+  // 이미 제외되므로(massing.py), 여기 도달한 best는 항상 검증을 통과한 배치다.
+  const cappedNote = result.cappedAt50 ? ' — 50층 제한에 도달했습니다. 더 높은 층수도 탐색하려면 위 체크박스를 켜고 다시 실행해보세요.' : '';
+  statusEl.textContent = `✔ 인동간격·채광사선·정북일조 이격 기준을 만족하는 배치만 채택 (회전각·층수 조합 ${result.searchStats.candidatesEvaluated}개 탐색, ${result.searchStats.elapsedMs}ms)${cappedNote}`;
+  statusEl.className = 'legal-status ok';
+
+  if (typeof drawLayoutPreview === 'function' && state.siteDimensions) {
+    stampFloorCountOnLabels(result, result.chosenFloors);
+    drawLayoutPreview(state.siteDimensions.bbox, result);
+  }
+
+  applyOptimizedMassingToSummary(result, r);
+}
+
+/**
+ * 정밀 최적화 결과를 화면 상단 "핵심 지표 요약"(건폐율/용적률) 패널에도 반영한다.
+ * 최적화 전에는 이 패널이 calculate()의 목표 세대수 기반 개략 계산값을 보여주는데,
+ * 최적화는 목표 세대수를 참고하지 않고 이 대지의 법정 최대 수용력을 새로 산출하므로
+ * 두 값이 서로 다를 수 있다 — 최적화를 실행한 뒤에는 위/아래 숫자가 일치하도록
+ * 상단 패널도 최적화 결과 기준으로 갱신한다(다른 입력을 바꿔 재계산하면 다시 원래
+ * 목표 기반 계산으로 돌아간다).
+ */
+function applyOptimizedMassingToSummary(result, r) {
+  const g = id => document.getElementById(id);
+  const bcrEl2 = g('sum-val-bcr'), bcrLimitEl = g('sum-limit-bcr'), bcrBarEl = g('sum-bar-bcr'), bcrItemEl = g('sum-bcr');
+  const farEl2 = g('sum-val-far'), farLimitEl = g('sum-limit-far'), farBarEl = g('sum-bar-far'), farItemEl = g('sum-far');
+  if (!bcrEl2 || !farEl2) return;
+
+  if (bcrEl2) bcrEl2.textContent = result.achievedBcr.toFixed(1) + '%';
+  if (bcrLimitEl) bcrLimitEl.textContent = `법정: ${r.legalBcrMax}% 이하 (정밀 최적화 결과)`;
+  if (bcrBarEl) bcrBarEl.style.width = Math.min(result.achievedBcr / r.legalBcrMax, 1) * 100 + '%';
+  if (bcrItemEl) bcrItemEl.className = 'summary-item ' + (result.achievedBcr <= r.legalBcrMax + 0.01 ? 'ok' : 'ng');
+
+  if (farEl2) farEl2.textContent = result.achievedFar.toFixed(1) + '%';
+  if (farLimitEl) farLimitEl.textContent = `목표: ${result.farCapTarget}% (정밀 최적화 결과)`;
+  if (farBarEl) farBarEl.style.width = Math.min(result.achievedFar / result.farCapTarget, 1) * 100 + '%';
+  if (farItemEl) farItemEl.className = 'summary-item ' + (result.achievedFar <= result.farCapTarget + 0.01 ? 'ok' : 'ng');
 }
 
 /* ═══════════════════════════════════════════════════

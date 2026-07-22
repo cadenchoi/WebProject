@@ -10,6 +10,9 @@ import math
 from shapely.geometry import shape, Polygon, mapping
 from shapely.ops import transform as shapely_transform, unary_union
 
+import geo_utils
+import massing
+
 app = Flask(__name__)
 
 # ==============================================================================
@@ -354,96 +357,6 @@ def zone_by_polygon():
         return jsonify({'error': str(e), 'zones': {}}), 500
 
 
-def classify_edge(lon, lat):
-    """
-    대지 변 바깥쪽 샘플 지점의 연속지적도(LP_PA_CBND_BUBUN)를 조회해 도로/인접대지를 판정.
-    이 레이어는 별도 지목 필드가 없고 jibun 문자열 끝에 지목 접미글자가 붙는 관행 표기를
-    그대로 반환한다 (실제 조회 확인: 도로 필지는 "1373도"처럼 "도"로 끝남).
-    도로로 판정되면 그 도로 필지 폴리곤의 최소회전사각형 짧은 변으로 도로폭을 근사 측정해 함께 반환
-    (건축법 제46조 도로사선 후퇴 자동계산용).
-    """
-    try:
-        url = 'https://api.vworld.kr/req/data'
-        params = {
-            'service': 'data',
-            'request': 'GetFeature',
-            'data': 'LP_PA_CBND_BUBUN',
-            'key': VWORLD_API_KEY,
-            'geomFilter': f'POINT({lon} {lat})',
-            'crs': 'EPSG:4326',
-            'format': 'json',
-            'domain': 'http://localhost:5000'
-        }
-        resp = req_lib.get(url, params=params, timeout=4)
-        data = resp.json()
-        features = data.get('response', {}).get('result', {}).get('featureCollection', {}).get('features', [])
-        if not features:
-            return 'adjacent', None
-
-        feat = features[0]
-        jibun = (feat.get('properties', {}).get('jibun') or '').strip()
-        if not jibun.endswith('도'):
-            return 'adjacent', None
-
-        road_width = None
-        try:
-            road_geom = feat.get('geometry')
-            if road_geom:
-                road_shape_ll = shape(road_geom)
-                rep_lat = road_shape_ll.representative_point().y
-                r_m_lat = 111320.0
-                r_m_lon = 111320.0 * math.cos(rep_lat * math.pi / 180)
-                road_shape_m = shapely_transform(lambda x, y: (x * r_m_lon, y * r_m_lat), road_shape_ll)
-                mrr_coords = list(road_shape_m.minimum_rotated_rectangle.exterior.coords)
-                side_a = math.dist(mrr_coords[0], mrr_coords[1])
-                side_b = math.dist(mrr_coords[1], mrr_coords[2])
-                road_width = round(min(side_a, side_b), 1)
-        except Exception as ew:
-            print('road width measure error:', ew)
-
-        return 'road', road_width
-    except Exception as e:
-        print('classify_edge error:', e)
-        return 'adjacent', None
-
-
-def query_zone_name(lon, lat):
-    """샘플 지점의 용도지역명(LT_C_UQ111) 조회 — 정북일조 예외(북측이 비주거지역) 판정용"""
-    try:
-        url = 'https://api.vworld.kr/req/data'
-        params = {
-            'service': 'data',
-            'request': 'GetFeature',
-            'data': 'LT_C_UQ111',
-            'key': VWORLD_API_KEY,
-            'geomFilter': f'POINT({lon} {lat})',
-            'crs': 'EPSG:4326',
-            'format': 'json',
-            'domain': 'http://localhost:5000'
-        }
-        resp = req_lib.get(url, params=params, timeout=4)
-        data = resp.json()
-        features = data.get('response', {}).get('result', {}).get('featureCollection', {}).get('features', [])
-        for feat in features:
-            name = feat.get('properties', {}).get('uname')
-            if name:
-                return name
-        return None
-    except Exception as e:
-        print('query_zone_name error:', e)
-        return None
-
-
-def is_north_exempt_zone(zone_name):
-    """
-    정북일조 사선은 인접대지가 전용주거·일반주거지역일 때만 적용된다(건축법 시행령 제86조③).
-    조회 실패로 용도지역을 알 수 없을 때는 보수적으로 면제하지 않는다(사선 유지).
-    """
-    if not zone_name:
-        return False
-    return not (('전용주거' in zone_name) or ('일반주거' in zone_name))
-
-
 @app.route('/api/buildable-envelope', methods=['POST'])
 def buildable_envelope():
     """
@@ -541,10 +454,10 @@ def buildable_envelope():
                     # 너무 짧은 변(디지타이징 노이즈)은 VWorld 조회 없이 보수적으로 인접대지 처리
                     edge_type = 'adjacent'
                 else:
-                    edge_type, road_width_m = classify_edge(sample_lon, sample_lat)
+                    edge_type, road_width_m = geo_utils.classify_edge(sample_lon, sample_lat, VWORLD_API_KEY)
 
             is_north = ny > 0.3  # 바깥쪽 법선이 북쪽 성분 우세 -> 정북 인접대지경계선 후보
-            north_exempt = is_north_exempt_zone(query_zone_name(sample_lon, sample_lat)) if is_north else None
+            north_exempt = geo_utils.is_north_exempt_zone(geo_utils.query_zone_name(sample_lon, sample_lat, VWORLD_API_KEY)) if is_north else None
 
             p1_ll = to_ll(*p1)
             p2_ll = to_ll(*p2)
@@ -595,6 +508,30 @@ def buildable_envelope():
 
     except Exception as e:
         print('buildable_envelope error:', e)
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/optimize-massing', methods=['POST'])
+def optimize_massing():
+    """
+    공동주택 주동 자동 배치·최적화: 건축가능영역(1차, /api/buildable-envelope 결과) 위에서
+    회전각·층수(·판상형은 밴드 오프셋)를 전수 탐색해 법정 건폐율/용적률 상한을 넘지 않으면서
+    용적률을 가장 많이 활용하는 배치를 찾는다. 목표 세대수는 참고하지 않고 이 대지의
+    법정 최대 수용력을 새로 산출한다 (호수 조합/주동 형상은 화면 선택값 고정, 1차 버전).
+
+    POST body: buildableEnvelope, envelopeEdges, unitTypeList, standardBuildingDepth,
+    standardUnitWidth, coreWidth, unitComboMode, buildingShapeMode, northSetbackRatio,
+    buildingGapRatio, floorHeight1~3Mm/floorHeightTypicalMm, landArea, legalBcrMax,
+    legalFarMax, relaxedFarLimit, avgFarAreaPerHousehold, maxFloorsCap(optional)
+    """
+    body = request.get_json()
+    if not body or 'buildableEnvelope' not in body:
+        return jsonify({'error': 'buildableEnvelope required'}), 400
+    try:
+        result = massing.optimize_massing(body['buildableEnvelope'], body.get('envelopeEdges') or [], body)
+        return jsonify(result)
+    except Exception as e:
+        print('optimize_massing error:', e)
         return jsonify({'error': str(e)}), 500
 
 

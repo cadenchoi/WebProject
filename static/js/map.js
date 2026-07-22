@@ -599,6 +599,28 @@ function drawEdgeClassification(edges, onToggle) {
 }
 
 /**
+ * /api/optimize-massing(Python/Shapely 정밀 최적화)를 호출해 결과를 반환한다.
+ * fetchBuildableEnvelope과 달리 콜백이 아니라 Promise를 그대로 반환 — 버튼 클릭 시
+ * 한 번만 호출하고 await로 기다리면 되는 opt-in 동작이라 콜백 체인이 필요 없다.
+ * 실패 시 { error } 형태로 반환한다(예외를 던지지 않음 — 호출부에서 error 필드만 확인하면 됨).
+ */
+async function fetchOptimizedMassing(payload) {
+  try {
+    const resp = await fetch('/api/optimize-massing', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+    const data = await resp.json();
+    if (!resp.ok) return { error: data.error || `HTTP ${resp.status}` };
+    return data;
+  } catch (err) {
+    console.warn('[정밀 최적화 실패]', err);
+    return { error: err.message || String(err) };
+  }
+}
+
+/**
  * calculator.js의 layoutInfo를 받아 개략 주동 형상을 카카오맵 단지 표기 스타일로 지도에 표시한다.
  * layoutInfo.rows[].segments가 있으면 동마다 세대수만큼 균등분할한 유닛 박스를(코어 구분 없이)
  * 옅은 단색 배경 + 얇은 테두리로 그리고, 동 중앙에 "평형타입 공급면적평" 라벨을 표시한다.

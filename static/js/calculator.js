@@ -138,6 +138,13 @@ const IN_ROW_BUILDING_GAP = 6;
  */
 function pickNextUnitType(unitTypeList, assignedCounts) {
   if (!unitTypeList || unitTypeList.length === 0) return { name: '유닛', supplyArea: 0 };
+  const idx = peekNextUnitTypeIndex(unitTypeList, assignedCounts);
+  assignedCounts[idx] = (assignedCounts[idx] || 0) + 1;
+  return unitTypeList[idx];
+}
+
+/** pickNextUnitType과 동일한 가중 라운드로빈 선택이지만 assignedCounts를 바꾸지 않는다(사전 조회용). */
+function peekNextUnitTypeIndex(unitTypeList, assignedCounts) {
   const total = unitTypeList.reduce((s, t) => s + t.count, 0) || 1;
   let bestIdx = 0, bestScore = Infinity;
   unitTypeList.forEach((t, idx) => {
@@ -145,8 +152,29 @@ function pickNextUnitType(unitTypeList, assignedCounts) {
     const score = ratio > 0 ? assignedCounts[idx] / ratio : Infinity;
     if (score < bestScore) { bestScore = score; bestIdx = idx; }
   });
-  assignedCounts[bestIdx] = (assignedCounts[bestIdx] || 0) + 1;
-  return unitTypeList[bestIdx];
+  return bestIdx;
+}
+
+/** pickNextUnitType과 동일하지만 상태를 바꾸지 않고 "다음에 배정될 타입"만 미리 확인한다(폭 계산용). */
+function peekNextUnitType(unitTypeList, assignedCounts) {
+  if (!unitTypeList || unitTypeList.length === 0) return { name: '유닛', supplyArea: 0 };
+  return unitTypeList[peekNextUnitTypeIndex(unitTypeList, assignedCounts)];
+}
+
+/**
+ * 세대타입별로 "공급면적 비례 세대 폭"을 계산해 붙인다. 표준 세대 폭(baseUnitWidth)은
+ * 전체 세대의 평균 공급면적 기준으로 이미 스케일된 값이므로, 각 타입은 자신의 공급면적이
+ * 평균보다 크면 더 넓게, 작으면 더 좁게 비례 배정한다 — 84타입과 59타입이 섞인 동에서
+ * 실제 크기 차이가 시각적으로 드러나도록 한다(이전에는 모든 타입이 동일한 표준폭이었음).
+ */
+function attachPerTypeUnitWidths(unitTypeList, baseUnitWidth) {
+  if (!unitTypeList || unitTypeList.length === 0) return unitTypeList;
+  const totalCount = unitTypeList.reduce((s, t) => s + t.count, 0) || 1;
+  const avgSupplyArea = unitTypeList.reduce((s, t) => s + t.count * t.supplyArea, 0) / totalCount;
+  return unitTypeList.map(t => ({
+    ...t,
+    unitWidth: avgSupplyArea > 0 ? baseUnitWidth * (t.supplyArea / avgSupplyArea) : baseUnitWidth
+  }));
 }
 
 /**
@@ -206,18 +234,24 @@ function layoutInDirection(poly, lat0, stackDir, widthDir, { bldgDepth, building
     if (band.length >= 3) {
       const w = polygonWidthX(band);
 
-      // 가용폭에 코어+N호 동을 옆으로 나란히 채울 수 있는 만큼 채운다 (동 사이 IN_ROW_BUILDING_GAP 이격)
+      // 가용폭에 코어+N호 동을 옆으로 나란히 채울 수 있는 만큼 채운다 (동 사이 IN_ROW_BUILDING_GAP 이격).
+      // 동 하나는 세대타입 하나로 채워지므로(아래 pickNextUnitType 1회/동), 폭 적합 여부를 판단할 때부터
+      // 그 동에 배정될 타입의 공급면적 비례 폭(unitWidth)을 미리 조회해서 써야 실제 그려지는 폭과
+      // 어긋나지 않는다 — 그래서 맞는 조합을 찾는 즉시 타입 배정도 함께 확정(mutate)한다.
       const buildings = [];
       let usedWidth = 0;
       while (true) {
         const gapNeeded = buildings.length > 0 ? IN_ROW_BUILDING_GAP : 0;
         const remaining = w - usedWidth - gapNeeded;
+        const candidateType = peekNextUnitType(types, assignedCounts);
+        const typeWidth = candidateType.unitWidth || unitWidth;
         let picked = null;
         for (const N of combos) {
-          const need = core + N * unitWidth;
-          if (need <= remaining) { picked = { N, need }; break; }
+          const need = core + N * typeWidth;
+          if (need <= remaining) { picked = { N, need, typeWidth }; break; }
         }
         if (!picked) break;
+        picked.unitType = pickNextUnitType(types, assignedCounts); // 위에서 미리 본 타입과 동일(상태 불변 구간)
         buildings.push(picked);
         usedWidth += gapNeeded + picked.need;
         if (buildings.length > 20) break; // 안전장치
@@ -230,10 +264,11 @@ function layoutInDirection(poly, lat0, stackDir, widthDir, { bldgDepth, building
         const segments = [];
         const buildingLabels = [];
         let unitsThisRow = 0;
+        let footprintAreaM2 = 0;
 
         buildings.forEach((b, i) => {
           if (i > 0) bx += IN_ROW_BUILDING_GAP;
-          const unitType = pickNextUnitType(types, assignedCounts);
+          const unitType = b.unitType;
           // 코어 구분 없이 세대수만큼 균등 분할해서 유닛 박스로 표시 (카카오맵 단지 표기 스타일)
           const unitBoxWidth = b.need / b.N;
           let cx = bx;
@@ -249,6 +284,7 @@ function layoutInDirection(poly, lat0, stackDir, widthDir, { bldgDepth, building
           });
           bx += b.need;
           unitsThisRow += b.N;
+          footprintAreaM2 += bldgDepth * b.need;
         });
 
         const outerStart = bandMinX + (w - usedWidth) / 2;
@@ -259,7 +295,8 @@ function layoutInDirection(poly, lat0, stackDir, widthDir, { bldgDepth, building
           unitsThisRow,
           segments,
           buildingLabels,
-          pathLL: toPathLL(outerStart, outerStart + usedWidth, y, y + bldgDepth) // 전체 외곽(폴백 렌더용)
+          pathLL: toPathLL(outerStart, outerStart + usedWidth, y, y + bldgDepth), // 전체 외곽(폴백 렌더용)
+          footprintAreaM2
         });
       }
     }
@@ -267,13 +304,28 @@ function layoutInDirection(poly, lat0, stackDir, widthDir, { bldgDepth, building
   }
 
   const totalUnitsPerFloorAllRows = rows.reduce((s, r) => s + r.unitsThisRow, 0);
-  return { rows, totalUnitsPerFloorAllRows };
+  const footprintAreaM2 = rows.reduce((s, r) => s + (r.footprintAreaM2 || 0), 0);
+  return { rows, totalUnitsPerFloorAllRows, footprintAreaM2 };
+}
+
+/**
+ * 목표 총 세대수 N을 두 날개(N1+N2=N, 각 날개 최소 1세대)로 나누는 분할 후보들을
+ * 균형 분할(반반에 가까운 순서)부터 반환한다. "2호"를 고르면 두 날개를 합쳐 정확히
+ * 2세대(1+1)가 되도록 하기 위한 것 — 날개마다 독립적으로 2세대씩 배정해 결과적으로
+ * 4세대(2+2)가 되어버리는 일이 없게 한다.
+ */
+function splitTotalIntoWings(N) {
+  const candidates = [];
+  for (let n1 = 1; n1 <= N - 1; n1++) candidates.push([n1, N - n1]);
+  candidates.sort((a, b) => Math.abs(a[0] - a[1]) - Math.abs(b[0] - b[1]));
+  return candidates;
 }
 
 /**
  * L자형 전략: 두 날개(날개A=폭 방향, 날개B=적층 방향)가 직각으로 꺾인 동을
- * 격자 형태의 후보 앵커점마다 시도해, 외곽 6개 꼭짓점이 모두 건축가능영역 내부에
- * 들어가는 조합(N1+N2, 큰 조합 우선) 중 가장 세대수가 많은 것을 채택해 반복 배치한다.
+ * 격자 형태의 후보 앵커점마다 시도한다. 호수 조합(예: 2/3/4/5호)은 "그 동의 총 세대수"를
+ * 의미하므로, 큰 호수부터 순서대로 시도하되 각 호수는 반드시 N1+N2=N으로 분할해
+ * (균형 분할 우선) 외곽 6개 꼭짓점이 건축가능영역 내부에 들어가는 첫 조합을 채택한다.
  * layoutInDirection과 동일한 rows 스키마(segments/buildingLabels/pathLL)로 반환해
  * drawLayoutPreview가 별도 처리 없이 그대로 그릴 수 있게 한다.
  */
@@ -297,34 +349,43 @@ function estimateLShapeLayout(poly, lat0, stackDir, widthDir, { bldgDepth, build
 
   const types = (unitTypeList && unitTypeList.length > 0) ? unitTypeList : [{ name: '유닛', supplyArea: 0, count: 1 }];
   const assignedCounts = types.map(() => 0);
-  const wingCombos = [...combos].sort((a, b) => b - a); // 큰 조합부터 시도
+  const targetTotals = [...combos].sort((a, b) => b - a); // 세대수 많은 호수부터 시도
 
-  const maxWing = core + Math.max(...wingCombos) * unitWidth;
-  const cellSize = maxWing + buildingGap; // 그리드 셀 크기(겹침 방지용 여유 포함)
+  // 그리드 셀 크기(안전 여백)는 실제 배정될 수 있는 타입 중 가장 넓은 타입 기준으로 잡아야
+  // 한다 — 공급면적 비례 폭 도입으로 타입별 폭이 균일하지 않으므로, 평균(unitWidth)보다
+  // 넓은 타입이 배정돼도 다음 앵커와 겹치지 않도록 보수적으로 계산한다.
+  const maxTypeWidth = Math.max(unitWidth, ...types.map(t => t.unitWidth || unitWidth));
+  // 그리드 셀 크기는 "한 날개가 가질 수 있는 최대 길이"(가장 큰 호수를 [N-1, 1]로 나눴을 때) 기준
+  const maxWingUnits = Math.max(1, Math.max(...targetTotals) - 1);
+  const maxWing = core + maxWingUnits * maxTypeWidth;
+  const cellSize = maxWing + buildingGap; // 다음 동과의 간격 = 장변(채광창) 간 인동간격
 
   const rows = [];
   let guardY = 0;
   for (let ay = minY; ay + bldgDepth <= maxY && guardY < 100; ay += cellSize, guardY++) {
     let guardX = 0;
     for (let ax = minX; ax + bldgDepth <= maxX && guardX < 100; ax += cellSize, guardX++) {
+      // 이 동 전체가 세대타입 하나로 채워지므로(아래 pickNextUnitType 1회), 배정될 타입을
+      // 미리 조회해 그 타입의 공급면적 비례 폭으로 L1/L2를 계산한다 — 실제 그려지는 폭과 일치시키기 위함.
+      const candidateType = peekNextUnitType(types, assignedCounts);
+      const typeWidth = candidateType.unitWidth || unitWidth;
       let best = null;
-      for (const N1 of wingCombos) {
-        for (const N2 of wingCombos) {
-          const L1 = core + N1 * unitWidth;
-          const L2 = core + N2 * unitWidth;
+      for (const N of targetTotals) {
+        for (const [N1, N2] of splitTotalIntoWings(N)) {
+          const L1 = core + N1 * typeWidth;
+          const L2 = core + N2 * typeWidth;
           const verts = [
             [ax, ay], [ax + L1, ay], [ax + L1, ay + bldgDepth],
             [ax + bldgDepth, ay + bldgDepth], [ax + bldgDepth, ay + L2], [ax, ay + L2]
           ];
-          if (verts.every(v => pointInPolygon(v, localPoly))) {
-            if (!best || (N1 + N2) > (best.N1 + best.N2)) best = { N1, N2, L1, L2 };
-          }
+          if (verts.every(v => pointInPolygon(v, localPoly))) { best = { N, N1, N2, L1, L2 }; break; }
         }
+        if (best) break;
       }
       if (!best) continue;
-      const { N1, N2, L1, L2 } = best;
+      const { N, N1, N2, L1, L2 } = best;
       const segments = [];
-      const unitType = pickNextUnitType(types, assignedCounts);
+      const unitType = pickNextUnitType(types, assignedCounts); // 위에서 미리 본 타입과 동일(상태 불변 구간)
 
       // 날개A: 폭 방향으로 N1개 균등분할
       const boxA = L1 / N1;
@@ -339,32 +400,38 @@ function estimateLShapeLayout(poly, lat0, stackDir, widthDir, { bldgDepth, build
 
       const areaPy = unitType.supplyArea > 0 ? Math.round(unitType.supplyArea * 0.3025) : null;
       const buildingLabels = [{
-        text: areaPy ? `${unitType.name} ${areaPy}평 (L자)` : `${unitType.name} (L자)`,
+        text: areaPy ? `${unitType.name} ${areaPy}평 (L자 ${N}호)` : `${unitType.name} (L자 ${N}호)`,
         positionLL: metersToLL(toWorld(ax + L1 / 2, ay + bldgDepth / 2), lat0)
       }];
 
       rows.push({
         width: Math.round(Math.max(L1, L2) * 10) / 10,
-        combo: `L(${N1}+${N2})`,
+        combo: `L${N}(${N1}+${N2})`,
         buildingCount: 1,
         unitsThisRow: N1 + N2,
         segments,
         buildingLabels,
-        pathLL: toPathLL(ax, ax + Math.max(L1, bldgDepth), ay, ay + Math.max(L2, bldgDepth))
+        pathLL: toPathLL(ax, ax + Math.max(L1, bldgDepth), ay, ay + Math.max(L2, bldgDepth)),
+        footprintAreaM2: bldgDepth * (L1 + L2 - bldgDepth) // 코너(모서리 정사각형) 중복 제외
       });
     }
   }
 
   const totalUnitsPerFloorAllRows = rows.reduce((s, r) => s + r.unitsThisRow, 0);
-  return { rows, totalUnitsPerFloorAllRows };
+  const footprintAreaM2 = rows.reduce((s, r) => s + (r.footprintAreaM2 || 0), 0);
+  return { rows, totalUnitsPerFloorAllRows, footprintAreaM2 };
 }
 
 /**
- * 타워형 전략: 코어 1개를 4세대가 감싸는 컴팩트한 정방형 풋프린트(폭 = core + 2×세대폭)를
- * 2차원 격자(폭·적층 방향 모두)로 순회하며, 네 꼭짓점이 건축가능영역 내부인 자리마다 배치한다.
- * 판상형·L자형보다 폭이 좁거나 형태가 불규칙한 대지에서 유리할 수 있는 점형 배치를 근사한다.
+ * 타워형 전략: 코어 1개를 세대들이 감싸는 컴팩트한 점형 배치.
+ * 판상형의 "여러 행"을 코어 하나 옆으로 바짝 압축한 것과 같은 방식으로, 선택된 호수 조합
+ * (2~5호 = 그 동의 총 세대수)만큼을 앞줄(ceil(N/2))·뒷줄(floor(N/2)) 두 줄로 나눠 배치한다.
+ * 앞줄·뒷줄은 서로 반대 방향을 바라보는 장변(채광창)이므로 다음 타워와는 판상형의 행간
+ * 인동간격과 동일하게 buildingGap만큼 이격하고, 같은 타워 내부의 세대끼리는 측벽(단변)으로
+ * 맞붙어 간격 없이 배치한다. 호수 조합을 반영하지 않고 늘 4세대(2×2)로 고정하던 이전 로직을
+ * 대체해, "호수 조합" 설정이 판상형·L자형과 동일하게 타워형에도 적용되도록 한다.
  */
-function estimateTowerLayout(poly, lat0, stackDir, widthDir, { bldgDepth, buildingGap, unitWidth, core, unitTypeList }) {
+function estimateTowerLayout(poly, lat0, stackDir, widthDir, { bldgDepth, buildingGap, unitWidth, core, combos, unitTypeList }) {
   const origin = polygonCentroidApprox(poly);
   const toLocal = p => [
     (p[0] - origin[0]) * widthDir[0] + (p[1] - origin[1]) * widthDir[1],
@@ -384,51 +451,72 @@ function estimateTowerLayout(poly, lat0, stackDir, widthDir, { bldgDepth, buildi
 
   const types = (unitTypeList && unitTypeList.length > 0) ? unitTypeList : [{ name: '유닛', supplyArea: 0, count: 1 }];
   const assignedCounts = types.map(() => 0);
+  const targetTotals = [...combos].sort((a, b) => b - a); // 세대수 많은 호수부터 시도
 
-  // 타워 풋프린트는 정사각형이 아니라 "폭 방향 2세대 + 코어" x "적층 방향 2세대(건물 깊이 기준)"
+  // 타워 풋프린트는 "폭 방향 최대 ceil(N/2)세대 + 코어" x "적층 방향 2줄(건물 깊이 기준)".
   // 실제 세대 프로포션(세대폭 >> 건물깊이)을 반영해 폭은 넓고 깊이는 얕게 잡는다.
-  const towerWidth = core + 2 * unitWidth;
+  // 그리드 안전 여백은 L자형과 동일한 이유로 가장 넓은 타입 기준으로 잡는다.
+  const maxTypeWidth = Math.max(unitWidth, ...types.map(t => t.unitWidth || unitWidth));
+  const maxFrontUnits = Math.ceil(Math.max(...targetTotals) / 2);
+  const towerWidthMax = core + maxFrontUnits * maxTypeWidth;
   const towerDepth = 2 * bldgDepth;
-  const stepX = towerWidth + buildingGap;
+  const stepX = towerWidthMax + buildingGap;
   const stepY = towerDepth + buildingGap;
-  const halfW = towerWidth / 2, halfD = towerDepth / 2;
 
   const rows = [];
   let guardY = 0;
-  for (let cy = minY + halfD; cy + halfD <= maxY && guardY < 200; cy += stepY, guardY++) {
+  for (let cy = minY; cy + towerDepth <= maxY && guardY < 200; cy += stepY, guardY++) {
     let guardX = 0;
-    for (let cx = minX + halfW; cx + halfW <= maxX && guardX < 200; cx += stepX, guardX++) {
-      const corners = [[cx - halfW, cy - halfD], [cx + halfW, cy - halfD], [cx + halfW, cy + halfD], [cx - halfW, cy + halfD]];
-      if (!corners.every(c => pointInPolygon(c, localPoly))) continue;
+    for (let cx = minX; cx + towerWidthMax <= maxX && guardX < 200; cx += stepX, guardX++) {
+      // 이 타워 전체가 세대타입 하나로 채워지므로(아래 pickNextUnitType 1회), 배정될 타입을
+      // 미리 조회해 그 타입의 공급면적 비례 폭으로 towerWidth를 계산한다.
+      const candidateType = peekNextUnitType(types, assignedCounts);
+      const typeWidth = candidateType.unitWidth || unitWidth;
+      let best = null;
+      for (const N of targetTotals) {
+        const front = Math.ceil(N / 2), back = Math.floor(N / 2);
+        const towerWidth = core + Math.max(front, back) * typeWidth;
+        const corners = [[cx, cy], [cx + towerWidth, cy], [cx + towerWidth, cy + towerDepth], [cx, cy + towerDepth]];
+        if (corners.every(c => pointInPolygon(c, localPoly))) { best = { N, front, back, towerWidth }; break; }
+      }
+      if (!best) continue;
+      const { N, front, back, towerWidth } = best;
 
-      const unitType = pickNextUnitType(types, assignedCounts);
+      const unitType = pickNextUnitType(types, assignedCounts); // 위에서 미리 본 타입과 동일(상태 불변 구간)
       const segments = [];
-      for (let qy = 0; qy < 2; qy++) {
-        for (let qx = 0; qx < 2; qx++) {
-          const x0 = cx - halfW + qx * halfW, y0 = cy - halfD + qy * halfD;
-          segments.push({ type: 'unit', pathLL: toPathLL(x0, x0 + halfW, y0, y0 + halfD) });
+      const boxFront = towerWidth / front;
+      for (let u = 0; u < front; u++) {
+        segments.push({ type: 'unit', pathLL: toPathLL(cx + u * boxFront, cx + (u + 1) * boxFront, cy + bldgDepth, cy + towerDepth) });
+      }
+      if (back > 0) {
+        const boxBack = towerWidth / back;
+        for (let u = 0; u < back; u++) {
+          segments.push({ type: 'unit', pathLL: toPathLL(cx + u * boxBack, cx + (u + 1) * boxBack, cy, cy + bldgDepth) });
         }
       }
+
       const areaPy = unitType.supplyArea > 0 ? Math.round(unitType.supplyArea * 0.3025) : null;
       const buildingLabels = [{
-        text: areaPy ? `${unitType.name} ${areaPy}평 (타워)` : `${unitType.name} (타워)`,
-        positionLL: metersToLL(toWorld(cx, cy), lat0)
+        text: areaPy ? `${unitType.name} ${areaPy}평 (타워 ${N}호)` : `${unitType.name} (타워 ${N}호)`,
+        positionLL: metersToLL(toWorld(cx + towerWidth / 2, cy + towerDepth / 2), lat0)
       }];
 
       rows.push({
         width: Math.round(towerWidth * 10) / 10,
-        combo: '4(타워)',
+        combo: `${N}(타워${front}+${back})`,
         buildingCount: 1,
-        unitsThisRow: 4,
+        unitsThisRow: N,
         segments,
         buildingLabels,
-        pathLL: toPathLL(cx - halfW, cx + halfW, cy - halfD, cy + halfD)
+        pathLL: toPathLL(cx, cx + towerWidth, cy, cy + towerDepth),
+        footprintAreaM2: towerWidth * towerDepth
       });
     }
   }
 
   const totalUnitsPerFloorAllRows = rows.reduce((s, r) => s + r.unitsThisRow, 0);
-  return { rows, totalUnitsPerFloorAllRows };
+  const footprintAreaM2 = rows.reduce((s, r) => s + (r.footprintAreaM2 || 0), 0);
+  return { rows, totalUnitsPerFloorAllRows, footprintAreaM2 };
 }
 
 /**
@@ -520,7 +608,10 @@ function estimatePolygonLayout({
   const unitWidth = num(standardUnitWidth) || 9;
   const core = num(coreWidth) || 10;
   const combos = unitComboMode === 'auto' ? [5, 4, 3, 2] : [num(unitComboMode) || 4];
-  const bandParams = { bldgDepth, buildingGap, unitWidth, core, combos, unitTypeList };
+  // 세대타입별 공급면적 비례 폭을 미리 붙여서 넘긴다 — 84/59 등 타입이 섞여도 실제 크기 차이가
+  // 유닛 박스 폭에 반영되도록(이전에는 모든 타입이 동일한 표준폭이었음).
+  const unitTypeListScaled = attachPerTypeUnitWidths(unitTypeList, unitWidth);
+  const bandParams = { bldgDepth, buildingGap, unitWidth, core, combos, unitTypeList: unitTypeListScaled };
 
   const resultA = layoutInDirection(poly, lat0, stackDirA, widthDirA, bandParams);
   const resultB = layoutInDirection(poly, lat0, stackDirB, widthDirB, bandParams);
@@ -535,14 +626,24 @@ function estimatePolygonLayout({
     : `${orientationLabel}(장변 배치)`;
 
   // ── ③ 판상형/L자형/타워형 세 전략을 모두 계산해 층당 세대수(=밀도)가 가장 높은 형상을 채택 ──
-  const lShapeResult = estimateLShapeLayout(poly, lat0, stackDirA, widthDirA, bandParams);
-  const towerResult = estimateTowerLayout(poly, lat0, stackDirA, widthDirA, bandParams);
+  // L자형·타워형도 판상형과 동일하게 장변/단변 두 방향 후보를 모두 계산해 더 나은 쪽을 채택한다
+  // (장변=세대 채광창이 있는 면=인동간격 buildingGap이 적용되는 방향, 단변=측벽=동 사이 최소
+  // 이격만 있으면 되는 방향 — 어느 쪽으로 돌렸을 때 이 조건을 만족하며 더 조밀하게 들어가는지 비교).
+  const lShapeResultA = estimateLShapeLayout(poly, lat0, stackDirA, widthDirA, bandParams);
+  const lShapeResultB = estimateLShapeLayout(poly, lat0, stackDirB, widthDirB, bandParams);
+  const lShapeSwapped = lShapeResultB.totalUnitsPerFloorAllRows > lShapeResultA.totalUnitsPerFloorAllRows;
+  const lShapeResult = lShapeSwapped ? lShapeResultB : lShapeResultA;
+
+  const towerResultA = estimateTowerLayout(poly, lat0, stackDirA, widthDirA, bandParams);
+  const towerResultB = estimateTowerLayout(poly, lat0, stackDirB, widthDirB, bandParams);
+  const towerSwapped = towerResultB.totalUnitsPerFloorAllRows > towerResultA.totalUnitsPerFloorAllRows;
+  const towerResult = towerSwapped ? towerResultB : towerResultA;
 
   const floorsFor = units => units > 0 ? Math.max(1, Math.ceil(totalHouseholds / units)) : null;
   const strategies = [
-    { shape: '판상형', label: rectLabel, rows: rectResult.rows, totalUnitsPerFloorAllRows: rectResult.totalUnitsPerFloorAllRows, orientationSwapped: useB },
-    { shape: 'L자형', label: 'L자형 배치', rows: lShapeResult.rows, totalUnitsPerFloorAllRows: lShapeResult.totalUnitsPerFloorAllRows, orientationSwapped: false },
-    { shape: '타워형', label: '타워형 배치', rows: towerResult.rows, totalUnitsPerFloorAllRows: towerResult.totalUnitsPerFloorAllRows, orientationSwapped: false }
+    { shape: '판상형', label: rectLabel, rows: rectResult.rows, totalUnitsPerFloorAllRows: rectResult.totalUnitsPerFloorAllRows, footprintAreaM2: rectResult.footprintAreaM2, orientationSwapped: useB },
+    { shape: 'L자형', label: 'L자형 배치', rows: lShapeResult.rows, totalUnitsPerFloorAllRows: lShapeResult.totalUnitsPerFloorAllRows, footprintAreaM2: lShapeResult.footprintAreaM2, orientationSwapped: lShapeSwapped },
+    { shape: '타워형', label: '타워형 배치', rows: towerResult.rows, totalUnitsPerFloorAllRows: towerResult.totalUnitsPerFloorAllRows, footprintAreaM2: towerResult.footprintAreaM2, orientationSwapped: towerSwapped }
   ].map(s => ({ ...s, requiredFloors: floorsFor(s.totalUnitsPerFloorAllRows) }));
 
   let chosenStrategy;
@@ -561,7 +662,7 @@ function estimatePolygonLayout({
     ? (chosenStrategy.orientationSwapped ? `${rectLabel}(배치효율 우선 자동 선택)` : rectLabel)
     : `${chosenStrategy.label}(배치효율 우선 자동 선택)`;
 
-  const { rows, totalUnitsPerFloorAllRows, requiredFloors } = chosenStrategy;
+  const { rows, totalUnitsPerFloorAllRows, requiredFloors, footprintAreaM2 } = chosenStrategy;
 
   return {
     maxRows: rows.length,
@@ -569,6 +670,7 @@ function estimatePolygonLayout({
     totalUnitsPerFloorAllRows,
     requiredFloors,
     rows,
+    footprintAreaM2, // 실제 배치된 동들의 폭×깊이 합산 — calculate()의 건폐율 산정에 사용(추정치 아님)
     northSetback, buildingGap, bldgDepth,
     frontSource, frontLabel, orientationSwapped: chosenStrategy.orientationSwapped,
     buildingShape: chosenStrategy.shape,
@@ -1070,7 +1172,13 @@ function calculate(inputs) {
   }
 
   // ── 건폐율 계산 ─────────────────────────────────────
-  const estBuildingFootprint = aboveFloors > 0 ? housingGroundArea / aboveFloors : housingGroundArea;
+  // 개략 배치 시뮬레이션(layoutInfo)이 실제로 동을 배치해서 폭×깊이를 합산해뒀으면 그 실측값을
+  // 쓰고, 배치 정보가 없을 때만(대지 미확정 등) 총 지상연면적을 층수로 나눈 산술 추정치로 대체한다.
+  // 추정치는 "층마다 면적이 균등하다"고 가정할 뿐 실제 동 개수·크기와 무관해 배치 결과와 어긋날 수 있다.
+  const estBuildingFootprint = (layoutInfo && layoutInfo.footprintAreaM2 > 0)
+    ? layoutInfo.footprintAreaM2
+    : (aboveFloors > 0 ? housingGroundArea / aboveFloors : housingGroundArea);
+  const bcrIsGeometric = !!(layoutInfo && layoutInfo.footprintAreaM2 > 0);
   const calculatedBcr = landArea > 0 ? (estBuildingFootprint / landArea) * 100 : 0;
 
   // ── 용적률 계산 ─────────────────────────────────────
@@ -1133,7 +1241,7 @@ function calculate(inputs) {
     parkingLegalSource, parkingMode,
 
     // 건폐율·용적률
-    estBuildingFootprint,
+    estBuildingFootprint, bcrIsGeometric,
     calculatedBcr, bcrOk,
     calculatedFar, farOk,
 
