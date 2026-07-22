@@ -104,6 +104,24 @@ function polygonCentroidApprox(poly) {
   return [sx / n, sy / n];
 }
 
+/**
+ * 1층/2층/3층/기준층 층고(mm)를 받아 예상 층수만큼 합산한 총 예상높이(m)를 계산한다.
+ * 미입력 층은 2900mm를 기본값으로 사용. 인동간격·채광사선·정북이격 산정의 "예상높이" 입력으로 쓰인다.
+ */
+function computeAssumedHeightM(floors, h1Mm, h2Mm, h3Mm, htypMm) {
+  const toM = mm => (num(mm) > 0 ? num(mm) : 2900) / 1000;
+  const H1 = toM(h1Mm), H2 = toM(h2Mm), H3 = toM(h3Mm), HT = toM(htypMm);
+  const n = Math.max(1, Math.round(floors));
+  let total = 0;
+  for (let i = 1; i <= n; i++) {
+    if (i === 1) total += H1;
+    else if (i === 2) total += H2;
+    else if (i === 3) total += H3;
+    else total += HT;
+  }
+  return total;
+}
+
 /** 미터 평면좌표 → 위경도(도), llToMeters의 역변환 */
 function metersToLL([x, y], lat0) {
   const mLat = 111320;
@@ -129,6 +147,23 @@ function pickNextUnitType(unitTypeList, assignedCounts) {
   });
   assignedCounts[bestIdx] = (assignedCounts[bestIdx] || 0) + 1;
   return unitTypeList[bestIdx];
+}
+
+/**
+ * 표준 ray-casting 점-폴리곤 포함 판정(로컬 미터 좌표 기준).
+ * L자형·타워형 전략에서 후보 동의 외곽 꼭짓점들이 건축가능영역 내부에 있는지 확인하는 데 쓴다.
+ */
+function pointInPolygon([px, py], poly) {
+  let inside = false;
+  const n = poly.length;
+  for (let i = 0, j = n - 1; i < n; j = i++) {
+    const [xi, yi] = poly[i];
+    const [xj, yj] = poly[j];
+    const intersect = ((yi > py) !== (yj > py)) &&
+      (px < (xj - xi) * (py - yi) / (yj - yi) + xi);
+    if (intersect) inside = !inside;
+  }
+  return inside;
 }
 
 /**
@@ -236,6 +271,167 @@ function layoutInDirection(poly, lat0, stackDir, widthDir, { bldgDepth, building
 }
 
 /**
+ * L자형 전략: 두 날개(날개A=폭 방향, 날개B=적층 방향)가 직각으로 꺾인 동을
+ * 격자 형태의 후보 앵커점마다 시도해, 외곽 6개 꼭짓점이 모두 건축가능영역 내부에
+ * 들어가는 조합(N1+N2, 큰 조합 우선) 중 가장 세대수가 많은 것을 채택해 반복 배치한다.
+ * layoutInDirection과 동일한 rows 스키마(segments/buildingLabels/pathLL)로 반환해
+ * drawLayoutPreview가 별도 처리 없이 그대로 그릴 수 있게 한다.
+ */
+function estimateLShapeLayout(poly, lat0, stackDir, widthDir, { bldgDepth, buildingGap, unitWidth, core, combos, unitTypeList }) {
+  const origin = polygonCentroidApprox(poly);
+  const toLocal = p => [
+    (p[0] - origin[0]) * widthDir[0] + (p[1] - origin[1]) * widthDir[1],
+    (p[0] - origin[0]) * stackDir[0] + (p[1] - origin[1]) * stackDir[1]
+  ];
+  const toWorld = (lx, ly) => [
+    origin[0] + lx * widthDir[0] + ly * stackDir[0],
+    origin[1] + lx * widthDir[1] + ly * stackDir[1]
+  ];
+  const toPathLL = (x0, x1, y0, y1) => [[x0, y0], [x1, y0], [x1, y1], [x0, y1]]
+    .map(([lx, ly]) => metersToLL(toWorld(lx, ly), lat0));
+
+  const localPoly = poly.map(toLocal);
+  const xs = localPoly.map(p => p[0]), ys = localPoly.map(p => p[1]);
+  const minX = Math.min(...xs), maxX = Math.max(...xs);
+  const minY = Math.min(...ys), maxY = Math.max(...ys);
+
+  const types = (unitTypeList && unitTypeList.length > 0) ? unitTypeList : [{ name: '유닛', supplyArea: 0, count: 1 }];
+  const assignedCounts = types.map(() => 0);
+  const wingCombos = [...combos].sort((a, b) => b - a); // 큰 조합부터 시도
+
+  const maxWing = core + Math.max(...wingCombos) * unitWidth;
+  const cellSize = maxWing + buildingGap; // 그리드 셀 크기(겹침 방지용 여유 포함)
+
+  const rows = [];
+  let guardY = 0;
+  for (let ay = minY; ay + bldgDepth <= maxY && guardY < 100; ay += cellSize, guardY++) {
+    let guardX = 0;
+    for (let ax = minX; ax + bldgDepth <= maxX && guardX < 100; ax += cellSize, guardX++) {
+      let best = null;
+      for (const N1 of wingCombos) {
+        for (const N2 of wingCombos) {
+          const L1 = core + N1 * unitWidth;
+          const L2 = core + N2 * unitWidth;
+          const verts = [
+            [ax, ay], [ax + L1, ay], [ax + L1, ay + bldgDepth],
+            [ax + bldgDepth, ay + bldgDepth], [ax + bldgDepth, ay + L2], [ax, ay + L2]
+          ];
+          if (verts.every(v => pointInPolygon(v, localPoly))) {
+            if (!best || (N1 + N2) > (best.N1 + best.N2)) best = { N1, N2, L1, L2 };
+          }
+        }
+      }
+      if (!best) continue;
+      const { N1, N2, L1, L2 } = best;
+      const segments = [];
+      const unitType = pickNextUnitType(types, assignedCounts);
+
+      // 날개A: 폭 방향으로 N1개 균등분할
+      const boxA = L1 / N1;
+      for (let u = 0; u < N1; u++) {
+        segments.push({ type: 'unit', pathLL: toPathLL(ax + u * boxA, ax + (u + 1) * boxA, ay, ay + bldgDepth) });
+      }
+      // 날개B: 코너(모서리 정사각형)는 날개A가 이미 표현하므로 그 이후 구간만 N2개로 분할
+      const boxB = (L2 - bldgDepth) / N2;
+      for (let u = 0; u < N2; u++) {
+        segments.push({ type: 'unit', pathLL: toPathLL(ax, ax + bldgDepth, ay + bldgDepth + u * boxB, ay + bldgDepth + (u + 1) * boxB) });
+      }
+
+      const areaPy = unitType.supplyArea > 0 ? Math.round(unitType.supplyArea * 0.3025) : null;
+      const buildingLabels = [{
+        text: areaPy ? `${unitType.name} ${areaPy}평 (L자)` : `${unitType.name} (L자)`,
+        positionLL: metersToLL(toWorld(ax + L1 / 2, ay + bldgDepth / 2), lat0)
+      }];
+
+      rows.push({
+        width: Math.round(Math.max(L1, L2) * 10) / 10,
+        combo: `L(${N1}+${N2})`,
+        buildingCount: 1,
+        unitsThisRow: N1 + N2,
+        segments,
+        buildingLabels,
+        pathLL: toPathLL(ax, ax + Math.max(L1, bldgDepth), ay, ay + Math.max(L2, bldgDepth))
+      });
+    }
+  }
+
+  const totalUnitsPerFloorAllRows = rows.reduce((s, r) => s + r.unitsThisRow, 0);
+  return { rows, totalUnitsPerFloorAllRows };
+}
+
+/**
+ * 타워형 전략: 코어 1개를 4세대가 감싸는 컴팩트한 정방형 풋프린트(폭 = core + 2×세대폭)를
+ * 2차원 격자(폭·적층 방향 모두)로 순회하며, 네 꼭짓점이 건축가능영역 내부인 자리마다 배치한다.
+ * 판상형·L자형보다 폭이 좁거나 형태가 불규칙한 대지에서 유리할 수 있는 점형 배치를 근사한다.
+ */
+function estimateTowerLayout(poly, lat0, stackDir, widthDir, { bldgDepth, buildingGap, unitWidth, core, unitTypeList }) {
+  const origin = polygonCentroidApprox(poly);
+  const toLocal = p => [
+    (p[0] - origin[0]) * widthDir[0] + (p[1] - origin[1]) * widthDir[1],
+    (p[0] - origin[0]) * stackDir[0] + (p[1] - origin[1]) * stackDir[1]
+  ];
+  const toWorld = (lx, ly) => [
+    origin[0] + lx * widthDir[0] + ly * stackDir[0],
+    origin[1] + lx * widthDir[1] + ly * stackDir[1]
+  ];
+  const toPathLL = (x0, x1, y0, y1) => [[x0, y0], [x1, y0], [x1, y1], [x0, y1]]
+    .map(([lx, ly]) => metersToLL(toWorld(lx, ly), lat0));
+
+  const localPoly = poly.map(toLocal);
+  const xs = localPoly.map(p => p[0]), ys = localPoly.map(p => p[1]);
+  const minX = Math.min(...xs), maxX = Math.max(...xs);
+  const minY = Math.min(...ys), maxY = Math.max(...ys);
+
+  const types = (unitTypeList && unitTypeList.length > 0) ? unitTypeList : [{ name: '유닛', supplyArea: 0, count: 1 }];
+  const assignedCounts = types.map(() => 0);
+
+  // 타워 풋프린트는 정사각형이 아니라 "폭 방향 2세대 + 코어" x "적층 방향 2세대(건물 깊이 기준)"
+  // 실제 세대 프로포션(세대폭 >> 건물깊이)을 반영해 폭은 넓고 깊이는 얕게 잡는다.
+  const towerWidth = core + 2 * unitWidth;
+  const towerDepth = 2 * bldgDepth;
+  const stepX = towerWidth + buildingGap;
+  const stepY = towerDepth + buildingGap;
+  const halfW = towerWidth / 2, halfD = towerDepth / 2;
+
+  const rows = [];
+  let guardY = 0;
+  for (let cy = minY + halfD; cy + halfD <= maxY && guardY < 200; cy += stepY, guardY++) {
+    let guardX = 0;
+    for (let cx = minX + halfW; cx + halfW <= maxX && guardX < 200; cx += stepX, guardX++) {
+      const corners = [[cx - halfW, cy - halfD], [cx + halfW, cy - halfD], [cx + halfW, cy + halfD], [cx - halfW, cy + halfD]];
+      if (!corners.every(c => pointInPolygon(c, localPoly))) continue;
+
+      const unitType = pickNextUnitType(types, assignedCounts);
+      const segments = [];
+      for (let qy = 0; qy < 2; qy++) {
+        for (let qx = 0; qx < 2; qx++) {
+          const x0 = cx - halfW + qx * halfW, y0 = cy - halfD + qy * halfD;
+          segments.push({ type: 'unit', pathLL: toPathLL(x0, x0 + halfW, y0, y0 + halfD) });
+        }
+      }
+      const areaPy = unitType.supplyArea > 0 ? Math.round(unitType.supplyArea * 0.3025) : null;
+      const buildingLabels = [{
+        text: areaPy ? `${unitType.name} ${areaPy}평 (타워)` : `${unitType.name} (타워)`,
+        positionLL: metersToLL(toWorld(cx, cy), lat0)
+      }];
+
+      rows.push({
+        width: Math.round(towerWidth * 10) / 10,
+        combo: '4(타워)',
+        buildingCount: 1,
+        unitsThisRow: 4,
+        segments,
+        buildingLabels,
+        pathLL: toPathLL(cx - halfW, cx + halfW, cy - halfD, cy + halfD)
+      });
+    }
+  }
+
+  const totalUnitsPerFloorAllRows = rows.reduce((s, r) => s + r.unitsThisRow, 0);
+  return { rows, totalUnitsPerFloorAllRows };
+}
+
+/**
  * 건축가능영역 폴리곤(1차, 도로·인접대지 이격 적용됨) 위에
  * ① 정북변 높이비례 추가 클리핑(정북일조 면제 변은 건너뜀) →
  * ② 정면방향 후보 결정(가장 긴 도로변에 평행 vs 그 수직방향, 도로가 없으면 정남향 vs 정동서향) →
@@ -250,7 +446,7 @@ function estimatePolygonLayout({
   buildableEnvelope, envelopeEdges, totalHouseholds,
   assumedHeight, northSetbackRatio, buildingGapRatio,
   standardBuildingDepth, standardUnitWidth, coreWidth, unitComboMode,
-  unitTypeList
+  unitTypeList, buildingShapeMode
 }) {
   if (!buildableEnvelope) return null;
 
@@ -288,7 +484,8 @@ function estimatePolygonLayout({
     return {
       maxRows: 0, unitsPerFloor: 0, totalUnitsPerFloorAllRows: 0, requiredFloors: null,
       rows: [], northSetback, buildingGap, bldgDepth, noFit: true,
-      frontSource: 'south', frontLabel: '정남향(기본)'
+      frontSource: 'south', frontLabel: '정남향(기본)',
+      buildingShape: null, strategyComparison: []
     };
   }
 
@@ -330,17 +527,41 @@ function estimatePolygonLayout({
 
   // 층당 세대수가 더 많이 나오는(=필요층수가 더 적어지는) 쪽을 채택. 동률이면 도로 정면(장변) 우선.
   const useB = resultB.totalUnitsPerFloorAllRows > resultA.totalUnitsPerFloorAllRows;
-  const chosen = useB ? resultB : resultA;
+  const rectResult = useB ? resultB : resultA;
   const frontSource = frontSourceA; // 도로 유무 자체는 A 기준(장변 후보)으로 판단
   const orientationLabel = frontSourceA === 'road' ? '주도로 방향' : '정남향';
-  const frontLabel = useB
-    ? `${orientationLabel}의 단변 배치(배치효율 우선 자동 선택)`
+  const rectLabel = useB
+    ? `${orientationLabel}의 단변 배치`
     : `${orientationLabel}(장변 배치)`;
 
-  const { rows, totalUnitsPerFloorAllRows } = chosen;
-  const requiredFloors = totalUnitsPerFloorAllRows > 0
-    ? Math.max(1, Math.ceil(totalHouseholds / totalUnitsPerFloorAllRows))
-    : null;
+  // ── ③ 판상형/L자형/타워형 세 전략을 모두 계산해 층당 세대수(=밀도)가 가장 높은 형상을 채택 ──
+  const lShapeResult = estimateLShapeLayout(poly, lat0, stackDirA, widthDirA, bandParams);
+  const towerResult = estimateTowerLayout(poly, lat0, stackDirA, widthDirA, bandParams);
+
+  const floorsFor = units => units > 0 ? Math.max(1, Math.ceil(totalHouseholds / units)) : null;
+  const strategies = [
+    { shape: '판상형', label: rectLabel, rows: rectResult.rows, totalUnitsPerFloorAllRows: rectResult.totalUnitsPerFloorAllRows, orientationSwapped: useB },
+    { shape: 'L자형', label: 'L자형 배치', rows: lShapeResult.rows, totalUnitsPerFloorAllRows: lShapeResult.totalUnitsPerFloorAllRows, orientationSwapped: false },
+    { shape: '타워형', label: '타워형 배치', rows: towerResult.rows, totalUnitsPerFloorAllRows: towerResult.totalUnitsPerFloorAllRows, orientationSwapped: false }
+  ].map(s => ({ ...s, requiredFloors: floorsFor(s.totalUnitsPerFloorAllRows) }));
+
+  let chosenStrategy;
+  if (buildingShapeMode && buildingShapeMode !== 'auto') {
+    chosenStrategy = strategies.find(s => s.shape === buildingShapeMode) || strategies[0];
+  } else {
+    // 필요층수가 가장 적은(=층당 세대를 가장 밀도 높게 채우는=용적률 활용도가 가장 높은) 전략을 채택. 동률/전부 미배치면 판상형 우선.
+    chosenStrategy = strategies.reduce((best, s) => {
+      if (s.totalUnitsPerFloorAllRows <= 0) return best;
+      if (!best) return s;
+      return s.requiredFloors < best.requiredFloors ? s : best;
+    }, null) || strategies[0];
+  }
+
+  const frontLabel = chosenStrategy.shape === '판상형'
+    ? (chosenStrategy.orientationSwapped ? `${rectLabel}(배치효율 우선 자동 선택)` : rectLabel)
+    : `${chosenStrategy.label}(배치효율 우선 자동 선택)`;
+
+  const { rows, totalUnitsPerFloorAllRows, requiredFloors } = chosenStrategy;
 
   return {
     maxRows: rows.length,
@@ -349,7 +570,11 @@ function estimatePolygonLayout({
     requiredFloors,
     rows,
     northSetback, buildingGap, bldgDepth,
-    frontSource, frontLabel, orientationSwapped: useB
+    frontSource, frontLabel, orientationSwapped: chosenStrategy.orientationSwapped,
+    buildingShape: chosenStrategy.shape,
+    strategyComparison: strategies.map(s => ({
+      shape: s.shape, unitsPerFloor: s.totalUnitsPerFloorAllRows, requiredFloors: s.requiredFloors
+    }))
   };
 }
 
@@ -409,10 +634,13 @@ function calculate(inputs) {
     envelopeEdges = null,            // 변별 분류 [{index,type,isNorth,p1,p2}, ...] (정북변 추가 클리핑용)
     northSetbackRatio = 0.5,         // 조례 정북 이격 비율 (기본 0.5 = 높이×0.5, 국토계획법 시행령 제86조)
     buildingGapRatio = null,         // 조례 인동간격(채광사선) 비율 — 비워두면 준주거·근린상업 0.25, 그 외 0.5 자동 적용
-    standardBuildingDepth = 15,      // 표준 동 깊이 (m)
-    standardUnitWidth = 9,           // 표준 세대 폭 (m)
+    standardBuildingDepth = 10,      // 표준 동 깊이 (m, 전용 84㎡ 기준 — 실제 평균 전용면적 비율로 자동 스케일)
+    standardUnitWidth = 15,          // 표준 세대 폭 (m, 전용 84㎡ 기준 — 실제 평균 전용면적 비율로 자동 스케일)
     coreWidth = 10,                  // 코어(계단실+승강기) 폭 (m)
-    unitComboMode = 'auto'           // 'auto' | 2 | 3 | 4 | 5 (한 개 층당 호수 조합)
+    unitComboMode = 'auto',          // 'auto' | 2 | 3 | 4 | 5 (한 개 층당 호수 조합)
+    buildingShapeMode = 'auto',      // 'auto' | '판상형' | 'L자형' | '타워형' (자동=용적률 활용도 최대 전략 채택)
+    // 층별 층고 (mm) — 인동간격·채광사선·정북이격의 예상높이 산정에 사용, 미입력 시 2900mm
+    floorHeight1Mm = null, floorHeight2Mm = null, floorHeight3Mm = null, floorHeightTypicalMm = null
   } = inputs;
 
   // ── 세대 집계 ─────────────────────────────────────────
@@ -772,30 +1000,37 @@ function calculate(inputs) {
     ? num(buildingGapRatio)
     : (relaxedGapZone ? 0.25 : 0.5);
 
+  // 표준 동깊이/세대폭은 전용 84㎡ 기준값 — 실제 평균 전용면적 비율로 비례 스케일
+  const avgAreaEx = totalHouseholds > 0 ? totalExclusiveArea / totalHouseholds : 84;
+  const areaScale = avgAreaEx / 84;
+  const scaledBuildingDepth = (num(standardBuildingDepth) || 10) * areaScale;
+  const scaledUnitWidth = (num(standardUnitWidth) || 15) * areaScale;
+
   if (num(aboveFloorsManual) > 0) {
     aboveFloors = num(aboveFloorsManual);
     if (aboveFloors > legalAboveFloors) legalAboveFloorsExceeded = true;
   } else {
-    // 예상 높이(층고 3m 가정)로 이격거리 1회 보정
-    const assumedHeight = Math.max(1, legalAboveFloors) * 3;
+    // 예상 높이: 1~3층 및 기준층 층고(입력 없으면 2900mm)를 실제 층수만큼 합산해 이격거리 산정에 사용
+    const assumedHeight = computeAssumedHeightM(legalAboveFloors, floorHeight1Mm, floorHeight2Mm, floorHeight3Mm, floorHeightTypicalMm);
 
     if (buildableEnvelope && totalHouseholds > 0) {
       // ② 건축가능영역 폴리곤 기반 배치
       layoutInfo = estimatePolygonLayout({
         buildableEnvelope, envelopeEdges, totalHouseholds, assumedHeight,
-        northSetbackRatio, buildingGapRatio: effectiveBuildingGapRatio, standardBuildingDepth,
-        standardUnitWidth, coreWidth, unitComboMode,
+        northSetbackRatio, buildingGapRatio: effectiveBuildingGapRatio,
+        standardBuildingDepth: scaledBuildingDepth, standardUnitWidth: scaledUnitWidth,
+        coreWidth, unitComboMode, buildingShapeMode,
         unitTypeList: unitResults.filter(t => t.count > 0).map(t => ({ name: t.name, supplyArea: t.supplyArea, count: t.count }))
       });
       if (layoutInfo) layoutInfo.legalAboveFloors = legalAboveFloors;
     } else if (siteDimensions && siteDimensions.widthEW > 0 && siteDimensions.depthNS > 0 && totalHouseholds > 0) {
       // ② 폴백: 바운딩박스 근사 (건축가능영역 폴리곤이 없을 때)
       const { widthEW, depthNS } = siteDimensions;
-      const unitsPerFloor = Math.max(1, Math.floor(widthEW / (num(standardUnitWidth) || 9)));
+      const unitsPerFloor = Math.max(1, Math.floor(widthEW / scaledUnitWidth));
       const northSetback = Math.max(1.5, assumedHeight * num(northSetbackRatio || 0.5));
       const buildingGap = assumedHeight * effectiveBuildingGapRatio;
       const usableDepth = depthNS - northSetback;
-      const bldgDepth = num(standardBuildingDepth) || 15;
+      const bldgDepth = scaledBuildingDepth;
       const maxRows = usableDepth > bldgDepth
         ? Math.max(1, Math.floor((usableDepth + buildingGap) / (bldgDepth + buildingGap)))
         : 1;
@@ -805,6 +1040,8 @@ function calculate(inputs) {
         : null;
       layoutInfo = { maxRows, unitsPerFloor, totalUnitsPerFloorAllRows: unitsPerFloorAllRows, requiredFloors, northSetback, buildingGap, legalAboveFloors, bldgDepth };
     }
+
+    if (layoutInfo) { layoutInfo.assumedHeight = assumedHeight; layoutInfo.areaScale = areaScale; }
 
     if (layoutInfo && layoutInfo.requiredFloors) {
       if (layoutInfo.requiredFloors > legalAboveFloors) {

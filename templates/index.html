@@ -18,7 +18,7 @@
   {% endif %}
 
   <!-- Custom CSS -->
-  <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}?v=17">
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}?v=19">
 </head>
 <body>
 
@@ -237,18 +237,18 @@
           </div>
           <div class="field-row-2">
             <div class="field-group">
-              <label class="field-label" for="standard-building-depth">표준 동 깊이 (m)<span class="optional-tag">기본 15m</span></label>
-              <input type="number" id="standard-building-depth" class="field-input" placeholder="15" step="0.5" min="8" max="30">
+              <label class="field-label" for="standard-building-depth">표준 동 깊이 (m)<span class="optional-tag">전용84 기준 10m, 면적비례</span></label>
+              <input type="number" id="standard-building-depth" class="field-input" placeholder="10" step="0.5" min="5" max="30">
             </div>
             <div class="field-group">
-              <label class="field-label" for="standard-unit-width">표준 세대 폭 (m)<span class="optional-tag">기본 9m</span></label>
-              <input type="number" id="standard-unit-width" class="field-input" placeholder="9" step="0.5" min="5" max="20">
+              <label class="field-label" for="standard-unit-width">표준 세대 폭 (m)<span class="optional-tag">전용84 기준 15m, 면적비례</span></label>
+              <input type="number" id="standard-unit-width" class="field-input" placeholder="15" step="0.5" min="5" max="30">
             </div>
           </div>
           <div class="field-row-2">
             <div class="field-group">
-              <label class="field-label" for="local-road-setback">조례 도로 후퇴거리 (m)<span class="optional-tag">기본 2m</span></label>
-              <input type="number" id="local-road-setback" class="field-input" placeholder="2" step="0.5" min="0" max="10">
+              <label class="field-label" for="local-road-setback">조례 도로 후퇴거리 (m)<span class="optional-tag">도로폭 실측 가능시 자동계산, 안되면 기본 3m</span></label>
+              <input type="number" id="local-road-setback" class="field-input" placeholder="3" step="0.5" min="0" max="10">
             </div>
             <div class="field-group">
               <label class="field-label" for="local-adjacent-setback">조례 대지안의 공지 (m)<span class="optional-tag">기본 1.5m</span></label>
@@ -271,14 +271,57 @@
               </select>
             </div>
           </div>
+          <div class="field-row-2">
+            <div class="field-group">
+              <label class="field-label" for="building-shape-mode">주동 형상<span class="optional-tag">자동=용적률 최대 형상 채택</span></label>
+              <select id="building-shape-mode" class="field-select">
+                <option value="auto">자동 (판상형/L자형/타워형 비교 후 최적 채택)</option>
+                <option value="판상형">판상형 고정</option>
+                <option value="L자형">L자형 고정</option>
+                <option value="타워형">타워형 고정</option>
+              </select>
+            </div>
+          </div>
+
+          <!-- 층별 층고 (인동간격·채광사선·정북이격 예상높이 산정용) -->
+          <div class="section-mini-title" style="margin-top:12px;"><i class="fa-solid fa-ruler-vertical"></i> 층별 층고 (mm) <span class="optional-tag">미입력 시 2900mm</span></div>
+          <div class="field-row-2">
+            <div class="field-group">
+              <label class="field-label" for="floor-height-1">1층 층고</label>
+              <input type="number" id="floor-height-1" class="field-input" placeholder="2900" step="50" min="2000" max="10000">
+            </div>
+            <div class="field-group">
+              <label class="field-label" for="floor-height-2">2층 층고</label>
+              <input type="number" id="floor-height-2" class="field-input" placeholder="2900" step="50" min="2000" max="10000">
+            </div>
+          </div>
+          <div class="field-row-2">
+            <div class="field-group">
+              <label class="field-label" for="floor-height-3">3층 층고</label>
+              <input type="number" id="floor-height-3" class="field-input" placeholder="2900" step="50" min="2000" max="10000">
+            </div>
+            <div class="field-group">
+              <label class="field-label" for="floor-height-typical">기준층 층고 (4층~)</label>
+              <input type="number" id="floor-height-typical" class="field-input" placeholder="2900" step="50" min="2000" max="10000">
+            </div>
+          </div>
+
           <div class="legal-mini-card" id="layout-sim-card">
             <div class="legal-row"><span>대지 개략 치수 (동서×남북)</span><span id="layout-site-dim">필지 확정 대기</span></div>
+            <div class="legal-row"><span>채택된 주동 형상</span><span id="layout-building-shape">—</span></div>
             <div class="legal-row"><span>정면 방향</span><span id="layout-front-direction">—</span></div>
             <div class="legal-row"><span>적용된 정북이격 / 인동간격</span><span id="layout-setback-values">—</span></div>
             <div class="legal-row"><span>배치 가능 동수</span><span id="layout-rows">—</span></div>
             <div class="legal-row"><span>배치 기반 필요층수</span><span id="layout-required-floors">—</span></div>
             <div class="legal-row" style="border-top:1px dashed var(--border); padding-top:6px; margin-top:2px;">
               <span>법정 최고층수 상한</span><span id="layout-legal-max-floors">—</span>
+            </div>
+            <div id="layout-shape-compare-wrap" style="border-top:1px dashed var(--border); padding-top:8px; margin-top:6px; display:none;">
+              <div style="font-size:12px; color:var(--text-muted); margin-bottom:4px;">형상별 비교 (층당 세대수 · 필요층수)</div>
+              <table class="shape-compare-table" id="layout-shape-compare-table">
+                <thead><tr><th>형상</th><th>층당 세대수</th><th>필요층수</th></tr></thead>
+                <tbody id="layout-shape-compare-body"></tbody>
+              </table>
             </div>
             <div class="legal-status" id="layout-status">구역계를 확정하면 자동 산정됩니다 (개략 근사치, 실시설계 시 재검토 필요)</div>
           </div>
@@ -902,9 +945,9 @@
 </div>
 
 <!-- JS 모듈 로드 순서 중요: zones → calculator → map → main -->
-<script src="{{ url_for('static', filename='js/zones.js') }}?v=17"></script>
-<script src="{{ url_for('static', filename='js/calculator.js') }}?v=17"></script>
-<script src="{{ url_for('static', filename='js/map.js') }}?v=17"></script>
-<script src="{{ url_for('static', filename='js/main.js') }}?v=17"></script>
+<script src="{{ url_for('static', filename='js/zones.js') }}?v=19"></script>
+<script src="{{ url_for('static', filename='js/calculator.js') }}?v=19"></script>
+<script src="{{ url_for('static', filename='js/map.js') }}?v=19"></script>
+<script src="{{ url_for('static', filename='js/main.js') }}?v=19"></script>
 </body>
 </html>

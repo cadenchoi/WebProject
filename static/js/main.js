@@ -325,6 +325,7 @@ function bindEvents() {
     'local-green-ratio', 'local-parking-ratio', 'local-openspace-ratio',
     'local-north-setback-ratio', 'local-building-gap-ratio',
     'standard-building-depth', 'standard-unit-width', 'core-width',
+    'floor-height-1', 'floor-height-2', 'floor-height-3', 'floor-height-typical',
     'above-floors', 'under-floors', 'exclusive-ratio',
     'parking-multiplier', 'parking-per-unit', 'parking-area-per-space', 'storage-area',
     'amenity-multiplier',
@@ -383,6 +384,10 @@ function bindEvents() {
   // 호수 조합 선택 → 재계산
   const unitComboMode = document.getElementById('unit-combo-mode');
   if (unitComboMode) unitComboMode.addEventListener('change', recalculate);
+
+  // 주동 형상 선택(자동/판상형/L자형/타워형) → 재계산
+  const buildingShapeMode = document.getElementById('building-shape-mode');
+  if (buildingShapeMode) buildingShapeMode.addEventListener('change', recalculate);
 
   // 도로 후퇴거리 / 대지안의 공지 이격거리 변경 → 건축가능영역 재조회
   ['local-road-setback', 'local-adjacent-setback'].forEach(id => {
@@ -486,13 +491,19 @@ function buildCalcInputs() {
     envelopeEdges:        state.envelopeEdges,
     northSetbackRatio:    v('local-north-setback-ratio') || 0.5,
     buildingGapRatio:     vn('local-building-gap-ratio'), // 비워두면 준주거/근린상업은 0.25, 그 외는 0.5 자동 적용
-    standardBuildingDepth: v('standard-building-depth') || 15,
-    standardUnitWidth:    v('standard-unit-width') || 9,
+    standardBuildingDepth: vn('standard-building-depth'), // 비워두면 전용84 기준 10m을 실제 평균 전용면적 비율로 스케일
+    standardUnitWidth:    vn('standard-unit-width'),      // 비워두면 전용84 기준 15m을 실제 평균 전용면적 비율로 스케일
     coreWidth:            v('core-width') || 10,
     unitComboMode:        (() => {
       const sel = g('unit-combo-mode')?.value;
       return sel && sel !== 'auto' ? parseInt(sel, 10) : 'auto';
-    })()
+    })(),
+    buildingShapeMode:    g('building-shape-mode')?.value || 'auto', // auto=판상형/L자형/타워형 비교 후 용적률 최대 형상 채택
+    // 층별 층고 (mm) — 비워두면 calculator.js에서 2900mm 기본 적용
+    floorHeight1Mm:       vn('floor-height-1'),
+    floorHeight2Mm:       vn('floor-height-2'),
+    floorHeight3Mm:       vn('floor-height-3'),
+    floorHeightTypicalMm: vn('floor-height-typical')
   };
 
   return inputs;
@@ -682,13 +693,32 @@ function updateSummaryPanel(r) {
 function updateLayoutSimCard(r) {
   const g = id => document.getElementById(id);
   const dimEl = g('layout-site-dim');
+  const shapeEl = g('layout-building-shape');
   const frontEl = g('layout-front-direction');
   const setbackEl = g('layout-setback-values');
   const rowsEl = g('layout-rows');
   const floorsEl = g('layout-required-floors');
   const legalMaxEl = g('layout-legal-max-floors');
   const statusEl = g('layout-status');
+  const compareWrap = g('layout-shape-compare-wrap');
+  const compareBody = g('layout-shape-compare-body');
   if (!dimEl || !rowsEl || !floorsEl || !statusEl) return;
+
+  const renderCompareTable = comparison => {
+    if (!compareWrap || !compareBody) return;
+    if (!comparison || comparison.length === 0) {
+      compareWrap.style.display = 'none';
+      compareBody.innerHTML = '';
+      return;
+    }
+    compareWrap.style.display = 'block';
+    compareBody.innerHTML = comparison.map(s => {
+      const noFit = !s.unitsPerFloor || s.unitsPerFloor <= 0;
+      const rowClass = noFit ? 'no-fit' : (s.shape === r.layoutInfo.buildingShape ? 'adopted' : '');
+      const mark = s.shape === r.layoutInfo.buildingShape ? ' ✔' : '';
+      return `<tr class="${rowClass}"><td>${s.shape}${mark}</td><td>${noFit ? '배치불가' : s.unitsPerFloor + '세대'}</td><td>${s.requiredFloors ? s.requiredFloors + '층' : '—'}</td></tr>`;
+    }).join('');
+  };
 
   // 법정 최고층수 상한은 대지가 확정되지 않아도(건폐율만 있어도) 항상 표시
   if (legalMaxEl) {
@@ -705,12 +735,14 @@ function updateLayoutSimCard(r) {
   const dims = state.siteDimensions;
   if (!dims) {
     dimEl.textContent = '필지 확정 대기';
+    if (shapeEl) shapeEl.textContent = '—';
     if (frontEl) frontEl.textContent = '—';
     if (setbackEl) setbackEl.textContent = '—';
     rowsEl.textContent = '—';
     floorsEl.textContent = '—';
     statusEl.textContent = '구역계를 확정하면 자동 산정됩니다 (개략 근사치, 실시설계 시 재검토 필요)';
     statusEl.className = 'legal-status';
+    renderCompareTable(null);
     if (typeof clearLayoutPreview === 'function') clearLayoutPreview();
     return;
   }
@@ -718,19 +750,23 @@ function updateLayoutSimCard(r) {
   dimEl.textContent = `${dims.widthEW.toLocaleString()}m × ${dims.depthNS.toLocaleString()}m`;
 
   if (!r.layoutInfo) {
+    if (shapeEl) shapeEl.textContent = '—';
     if (frontEl) frontEl.textContent = '—';
     if (setbackEl) setbackEl.textContent = '—';
     rowsEl.textContent = '—';
     floorsEl.textContent = '—';
     statusEl.textContent = '세대 타입·세대수를 입력하면 자동 산정됩니다';
     statusEl.className = 'legal-status';
+    renderCompareTable(null);
     if (typeof clearLayoutPreview === 'function') clearLayoutPreview();
     return;
   }
 
+  if (shapeEl) shapeEl.textContent = r.layoutInfo.buildingShape || '—';
   if (frontEl) frontEl.textContent = r.layoutInfo.frontLabel || '정남향(기본)';
   if (setbackEl) {
-    setbackEl.textContent = `${r.layoutInfo.northSetback.toFixed(1)}m / ${r.layoutInfo.buildingGap.toFixed(1)}m (예상 지상 ${r.aboveFloors}층 기준)`;
+    const heightText = r.layoutInfo.assumedHeight ? `, 예상높이 ${r.layoutInfo.assumedHeight.toFixed(1)}m` : '';
+    setbackEl.textContent = `${r.layoutInfo.northSetback.toFixed(1)}m / ${r.layoutInfo.buildingGap.toFixed(1)}m (지상 ${r.aboveFloors}층${heightText})`;
   }
 
   const usedEnvelope = !!state.buildableEnvelope;
@@ -742,6 +778,7 @@ function updateLayoutSimCard(r) {
     ? `총 ${totalBuildingCount}개 동 (${r.layoutInfo.maxRows}개 열, 층당 ${r.layoutInfo.totalUnitsPerFloorAllRows}세대)${comboText}`
     : '배치 불가 (가용폭 부족)';
   floorsEl.textContent = r.layoutInfo.requiredFloors ? `${r.layoutInfo.requiredFloors}층` : '—';
+  renderCompareTable(r.layoutInfo.strategyComparison);
 
   if (typeof drawLayoutPreview === 'function') {
     drawLayoutPreview(dims.bbox, r.layoutInfo);

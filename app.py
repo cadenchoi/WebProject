@@ -456,7 +456,7 @@ def buildable_envelope():
 
     POST body:
       geom            : 대지 폴리곤 GeoJSON (Polygon/MultiPolygon)
-      roadSetback     : 도로 후퇴거리 (m, 기본 2)
+      roadSetback     : 도로 후퇴거리 (m, 기본 3 — 도로폭 실측이 가능하면 건축법 제46조 계산값이 우선 적용됨)
       adjacentSetback : 대지안의 공지 이격거리 (m, 기본 1.5)
       edgeOverrides   : [{ index, type: 'road'|'adjacent' }, ...] 사용자 수동보정
     """
@@ -465,9 +465,10 @@ def buildable_envelope():
         return jsonify({'error': 'geom required'}), 400
 
     geom = body['geom']
-    # roadSetback을 사용자가 직접 입력하지 않았으면(None) 도로폭 실측 기반 자동계산으로 대체한다
+    # roadSetback을 사용자가 직접 입력하지 않았으면(None) 도로폭 실측 기반 자동계산(건축법 제46조)으로 대체하고,
+    # 그마저도 실측이 안 되면(도로 폭 조회 실패 등) 3m를 기본값으로 사용한다.
     road_setback_explicit = body.get('roadSetback')
-    road_setback = float(road_setback_explicit) if road_setback_explicit else 2.0
+    road_setback = float(road_setback_explicit) if road_setback_explicit else 3.0
     adjacent_setback = float(body.get('adjacentSetback') or 1.5)
     overrides = {
         o['index']: o['type']

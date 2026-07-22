@@ -496,6 +496,22 @@ input::-webkit-inner-spin-button { -webkit-appearance: none; }
 .legal-status.ok { background: var(--success-bg); color: var(--success); }
 .legal-status.ng { background: var(--danger-bg); color: var(--danger); }
 
+/* 주동 형상 전략 비교표 */
+.shape-compare-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.78rem;
+}
+.shape-compare-table th, .shape-compare-table td {
+  padding: 4px 6px;
+  text-align: center;
+  border-bottom: 1px solid var(--border);
+  color: var(--text-sub);
+}
+.shape-compare-table th { color: var(--text-main); font-weight: 700; }
+.shape-compare-table tr.adopted td { color: var(--primary); font-weight: 700; }
+.shape-compare-table tr.no-fit td { color: var(--text-sub); opacity: 0.55; }
+
 /* 섹션 미니 타이틀 */
 .section-mini-title {
   font-size: 0.82rem;
