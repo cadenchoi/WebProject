@@ -1,0 +1,704 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>신영 상품개발팀 건축개요 툴</title>
+  <meta name="description" content="대지를 선택하고 기본 정보만 입력하면 건폐율·용적률·연면적이 자동으로 계산되는 건축개요 생성 도구">
+  <!-- Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@300;400;500;700;900&display=swap" rel="stylesheet">
+  <!-- Icons -->
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
+  
+  <!-- Kakao Map API -->
+  {% if kakao_api_key %}
+  <script type="text/javascript" src="https://dapi.kakao.com/v2/maps/sdk.js?appkey={{ kakao_api_key }}&libraries=services"></script>
+  {% endif %}
+
+  <!-- Custom CSS -->
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}?v=8">
+</head>
+<body>
+
+<!-- ═══════════════════ TOP NAV ═══════════════════ -->
+<nav class="top-nav no-print">
+  <div class="nav-brand">
+    <img src="{{ url_for('static', filename='sinyoung_logo.png') }}" alt="신영" class="nav-logo-img">
+    <div class="nav-brand-text">
+      <span class="nav-brand-company">신영</span>
+      <span class="nav-brand-team">상품개발팀 · 건축개요 툴</span>
+    </div>
+  </div>
+  <div class="nav-actions">
+    <button class="btn-nav" id="btn-clear" title="초기화">
+      <i class="fa-solid fa-rotate-left"></i> 초기화
+    </button>
+    <button class="btn-nav btn-primary-nav" id="btn-print">
+      <i class="fa-solid fa-print"></i> PDF 출력
+    </button>
+  </div>
+</nav>
+
+<!-- ═══════════════════ MAIN LAYOUT ═══════════════════ -->
+<div class="app-layout">
+
+  <!-- ── LEFT WIZARD PANEL ── -->
+  <aside class="wizard-panel no-print">
+    <div class="wizard-scroll">
+
+      <!-- STEP 1: 대지 정보 -->
+      <div class="wizard-step active" data-step="1">
+        <div class="step-header" data-toggle="1">
+          <div class="step-badge">01</div>
+          <div class="step-title">
+            <strong>대지 정보</strong>
+            <span>위치·면적·용도지역 설정</span>
+          </div>
+          <i class="fa-solid fa-chevron-down step-arrow"></i>
+        </div>
+        <div class="step-body" id="step-body-1">
+          <!-- 주소 검색 -->
+          <div class="field-group">
+            <label class="field-label">
+              <i class="fa-solid fa-magnifying-glass"></i> 주소 검색
+            </label>
+            <div class="search-row">
+              <input type="text" id="search-input" class="field-input" placeholder="시·군·구 또는 지번 입력" autocomplete="off">
+              <button class="btn-search" id="btn-search"><i class="fa-solid fa-search"></i></button>
+            </div>
+            <!-- 검색 결과 드롭다운 -->
+            <div class="search-results" id="search-results"></div>
+            <p class="field-hint"><i class="fa-solid fa-circle-info"></i> 또는 오른쪽 지도를 직접 클릭하세요</p>
+          </div>
+
+          <!-- 대지위치 -->
+          <div class="field-group">
+            <label class="field-label" for="location-text">대지위치</label>
+            <input type="text" id="location-text" class="field-input" placeholder="주소 검색 또는 직접 입력">
+          </div>
+
+          <!-- 대지면적 -->
+          <div class="field-row-2">
+            <div class="field-group">
+              <label class="field-label" for="land-area">대지면적 (㎡)</label>
+              <input type="number" id="land-area" class="field-input" placeholder="예: 11970" step="0.01" min="0">
+            </div>
+            <div class="field-group">
+              <label class="field-label" for="contrib-area">기부채납 도로면적 (㎡)</label>
+              <input type="number" id="contrib-area" class="field-input" placeholder="없으면 0" step="0.01" min="0" value="0">
+            </div>
+          </div>
+
+          <!-- 용도지역 -->
+          <div class="field-group">
+            <label class="field-label" for="zone-display">
+              <i class="fa-solid fa-map-location-dot"></i> 용도지역
+            </label>
+            <input type="text" id="zone-display" class="field-input" readonly placeholder="지도를 클릭하면 자동 입력됩니다" value="">
+            <input type="hidden" id="zone-select" value="">
+            <div class="zone-info-badge" id="zone-info-badge" style="display:none;"></div>
+          </div>
+
+          <!-- 지자체 조례 용적률 덮어쓰기 -->
+          <div class="field-row-2">
+            <div class="field-group">
+              <label class="field-label" for="local-bcr">조례 건폐율 상한 (%)<span class="optional-tag">선택</span></label>
+              <input type="number" id="local-bcr" class="field-input" placeholder="법정값 자동입력" step="0.1" min="0">
+            </div>
+            <div class="field-group">
+              <label class="field-label" for="local-far">조례 용적률 상한 (%)<span class="optional-tag">선택</span></label>
+              <input type="number" id="local-far" class="field-input" placeholder="법정값 자동입력" step="0.1" min="0">
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- STEP 2: 건물 기본 정보 -->
+      <div class="wizard-step" data-step="2">
+        <div class="step-header" data-toggle="2">
+          <div class="step-badge">02</div>
+          <div class="step-title">
+            <strong>건물 기본 정보</strong>
+            <span>층수·세대·전용면적 구성</span>
+          </div>
+          <i class="fa-solid fa-chevron-down step-arrow"></i>
+        </div>
+        <div class="step-body collapsed" id="step-body-2">
+          <!-- 사업명 / 구조 -->
+          <div class="field-group">
+            <label class="field-label" for="project-name">사업명</label>
+            <input type="text" id="project-name" class="field-input" placeholder="예: ○○ 공동주택 신축공사">
+          </div>
+
+          <div class="field-row-2">
+            <div class="field-group">
+              <label class="field-label" for="structure-type">구조</label>
+              <select id="structure-type" class="field-select">
+                <option value="철근콘크리트 벽식구조">철근콘크리트 벽식구조</option>
+                <option value="철근콘크리트 라멘구조">철근콘크리트 라멘구조</option>
+                <option value="철골철근콘크리트구조">철골철근콘크리트구조</option>
+                <option value="철골구조">철골구조</option>
+                <option value="조적구조">조적구조</option>
+                <option value="목구조">목구조</option>
+              </select>
+            </div>
+            <div class="field-group">
+              <label class="field-label" for="building-use">주용도</label>
+              <select id="building-use" class="field-select">
+                <option value="공동주택">공동주택 (아파트)</option>
+                <option value="단독주택">단독주택</option>
+                <option value="다가구주택">다가구주택</option>
+                <option value="도시형생활주택">도시형생활주택</option>
+                <option value="오피스텔">오피스텔</option>
+                <option value="근린생활시설">근린생활시설</option>
+                <option value="업무시설">업무시설</option>
+              </select>
+            </div>
+          </div>
+
+          <!-- 층수 -->
+          <div class="field-row-2">
+            <div class="field-group">
+              <label class="field-label" for="above-floors">
+                지상층수
+                <span class="optional-tag" id="above-floors-auto" style="color:var(--accent);"></span>
+              </label>
+              <input type="number" id="above-floors" class="field-input" placeholder="비워두면 자동추정" min="1" value="">
+            </div>
+            <div class="field-group">
+              <label class="field-label" for="under-floors">
+                지하층수
+                <span class="optional-tag" id="under-floors-auto" style="color:var(--accent);"></span>
+              </label>
+              <input type="number" id="under-floors" class="field-input" placeholder="비워두면 자동추정" min="0" value="">
+            </div>
+          </div>
+
+          <!-- 전용률 -->
+          <div class="field-group">
+            <label class="field-label" for="exclusive-ratio">
+              전용률 (%)
+              <span class="optional-tag">기본 74.8%</span>
+            </label>
+            <input type="number" id="exclusive-ratio" class="field-input" value="74.8" step="0.1" min="50" max="100">
+          </div>
+
+          <!-- 세대 타입 구성 -->
+          <div class="field-group">
+            <label class="field-label">
+              <i class="fa-solid fa-layer-group"></i> 세대 타입 구성
+              <button class="btn-add-type" id="btn-add-type" title="타입 추가">
+                <i class="fa-solid fa-plus"></i>
+              </button>
+            </label>
+            <div id="unit-types-container">
+              <!-- JS로 동적 렌더링 -->
+            </div>
+          </div>
+
+          <!-- 계산 결과 뱃지 -->
+          <div class="calc-badge-group">
+            <div class="calc-badge" id="badge-households">
+              <span class="badge-label">총 세대수</span>
+              <span class="badge-value" id="val-households">0</span>
+              <span class="badge-unit">세대</span>
+            </div>
+            <div class="calc-badge" id="badge-supply-area">
+              <span class="badge-label">공동주택 연면적</span>
+              <span class="badge-value" id="val-supply-area">0</span>
+              <span class="badge-unit">㎡</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- STEP 3: 주차 & 부대시설 -->
+      <div class="wizard-step" data-step="3">
+        <div class="step-header" data-toggle="3">
+          <div class="step-badge">03</div>
+          <div class="step-title">
+            <strong>주차 & 부대시설</strong>
+            <span>주차대수·복리시설 면적 입력</span>
+          </div>
+          <i class="fa-solid fa-chevron-down step-arrow"></i>
+        </div>
+        <div class="step-body collapsed" id="step-body-3">
+          <!-- 주차 계획 -->
+          <div class="section-mini-title"><i class="fa-solid fa-square-parking"></i> 주차 계획</div>
+
+          <!-- 주차대수: 법정대수 × 배수 방식 -->
+          <div class="field-group">
+            <label class="field-label" for="parking-multiplier">
+              계획 주차 배수 (법정대수 기준)
+              <span class="optional-tag">기본 1.2배</span>
+            </label>
+            <div style="display:flex; gap:8px; align-items:center;">
+              <input type="range" id="parking-multiplier-range" min="1.0" max="3.0" step="0.1" value="1.2"
+                style="flex:1; accent-color:var(--accent);" oninput="document.getElementById('parking-multiplier').value=this.value; recalculate();">
+              <input type="number" id="parking-multiplier" class="field-input" value="1.2" step="0.1" min="1.0" max="5.0"
+                style="width:70px;" oninput="document.getElementById('parking-multiplier-range').value=this.value;">
+              <span style="color:var(--text-muted); font-size:0.8rem;">배</span>
+            </div>
+          </div>
+
+          <!-- 주차면적 단위 -->
+          <div class="field-row-2">
+            <div class="field-group">
+              <label class="field-label" for="parking-area-per-space">
+                주차 1면당 면적 (㎡)
+                <span class="optional-tag">기본 36㎡</span>
+              </label>
+              <input type="number" id="parking-area-per-space" class="field-input" value="36" step="1" min="20" max="60">
+            </div>
+            <div class="field-group">
+              <label class="field-label" for="storage-area">세대 창고 면적 (㎡) <span class="optional-tag">선택</span></label>
+              <input type="number" id="storage-area" class="field-input" value="0" step="0.01" min="0">
+            </div>
+          </div>
+
+          <!-- 법정 주차 계산 배지 -->
+          <div class="legal-mini-card" id="parking-legal-card">
+            <div class="legal-row">
+              <span>법정 주차대수</span>
+              <span id="legal-parking-val">계산 대기</span>
+            </div>
+            <div class="legal-row">
+              <span>계획 주차대수 (법정×<span id="parking-mult-display">1.2</span>배)</span>
+              <span id="actual-parking-val">0 대</span>
+            </div>
+            <div class="legal-row">
+              <span>추정 주차장 면적</span>
+              <span id="parking-area-est">— ㎡</span>
+            </div>
+            <div class="legal-status" id="parking-status">세대 정보를 먼저 입력하세요</div>
+          </div>
+
+          <!-- 부대복리시설 -->
+          <div class="section-mini-title" style="margin-top:20px;"><i class="fa-solid fa-building-user"></i> 부대복리시설 <span class="optional-tag">법정면적 자동산정</span></div>
+
+          <!-- 법정면적 조정 배수 슬라이더 -->
+          <div class="field-group">
+            <label class="field-label" for="amenity-multiplier">
+              부대복리시설 확장 배수
+              <span class="optional-tag" id="amenity-mult-label">법정면적 ×1.0 (최소)</span>
+            </label>
+            <div style="display:flex; gap:8px; align-items:center;">
+              <input type="range" id="amenity-multiplier-range" min="1.0" max="2.0" step="0.1" value="1.0"
+                style="flex:1; accent-color:var(--accent);" oninput="document.getElementById('amenity-multiplier').value=this.value; recalculate();">
+              <input type="number" id="amenity-multiplier" class="field-input" value="1.0" step="0.1" min="1.0" max="3.0"
+                style="width:70px;" oninput="document.getElementById('amenity-multiplier-range').value=this.value;">
+              <span style="color:var(--text-muted); font-size:0.8rem;">배</span>
+            </div>
+          </div>
+
+          <!-- 법정 자동산정 결과 카드 -->
+          <div class="legal-mini-card" id="amenity-auto-card" style="margin-bottom:12px;">
+            <div class="legal-row" style="font-size:0.75rem; color:var(--accent); font-weight:600;">🏢 자동 산정 결과 (비워두면 아래 값으로 자동 반영)</div>
+            <div class="legal-row"><span>관리사무소</span><span id="auto-office-val">—</span></div>
+            <div class="legal-row"><span>경비실</span><span id="auto-guard-val">—</span></div>
+            <div class="legal-row"><span>경로당</span><span id="auto-senior-val">—</span></div>
+            <div class="legal-row"><span>어린이집</span><span id="auto-kinder-val">—</span></div>
+            <div class="legal-row"><span>주민공동시설(지하)</span><span id="auto-community-val">—</span></div>
+          </div>
+
+          <!-- 직접 입력 (비워두면 자동값 적용) -->
+          <div style="font-size:0.75rem; color:var(--text-muted); margin-bottom:6px;">▸ 직접 입력 시 해당 시설은 입력값 우선 적용</div>
+          <div class="field-row-2">
+            <div class="field-group">
+              <label class="field-label" for="area-office">관리사무소 (㎡)</label>
+              <input type="number" id="area-office" class="field-input" placeholder="자동" step="0.01" min="0">
+            </div>
+            <div class="field-group">
+              <label class="field-label" for="area-guard">경비실 (㎡)</label>
+              <input type="number" id="area-guard" class="field-input" placeholder="자동" step="0.01" min="0">
+            </div>
+            <div class="field-group">
+              <label class="field-label" for="area-senior">경로당 (㎡)</label>
+              <input type="number" id="area-senior" class="field-input" placeholder="자동" step="0.01" min="0">
+            </div>
+            <div class="field-group">
+              <label class="field-label" for="area-kinder">어린이집 (㎡)</label>
+              <input type="number" id="area-kinder" class="field-input" placeholder="자동" step="0.01" min="0">
+            </div>
+            <div class="field-group">
+              <label class="field-label" for="area-library">작은도서관 (㎡)</label>
+              <input type="number" id="area-library" class="field-input" placeholder="선택" step="0.01" min="0">
+            </div>
+            <div class="field-group">
+              <label class="field-label" for="area-care">다함께돌봄 (㎡)</label>
+              <input type="number" id="area-care" class="field-input" placeholder="선택" step="0.01" min="0">
+            </div>
+            <div class="field-group">
+              <label class="field-label" for="area-community">주민공동시설 지하 (㎡)</label>
+              <input type="number" id="area-community" class="field-input" placeholder="자동" step="0.01" min="0">
+            </div>
+            <div class="field-group">
+              <label class="field-label" for="area-shop">근린생활시설 (㎡)</label>
+              <input type="number" id="area-shop" class="field-input" placeholder="없으면 0" step="0.01" min="0">
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 핵심 지표 요약 (항상 노출) -->
+      <div class="summary-panel">
+        <div class="summary-title">📊 핵심 지표 요약</div>
+        <div class="summary-grid">
+          <div class="summary-item" id="sum-bcr">
+            <div class="sum-label">건폐율</div>
+            <div class="sum-value" id="sum-val-bcr">—</div>
+            <div class="sum-limit" id="sum-limit-bcr">법정: —</div>
+            <div class="sum-bar-wrap"><div class="sum-bar" id="sum-bar-bcr"></div></div>
+          </div>
+          <div class="summary-item" id="sum-far">
+            <div class="sum-label">용적률</div>
+            <div class="sum-value" id="sum-val-far">—</div>
+            <div class="sum-limit" id="sum-limit-far">완화: —</div>
+            <div class="sum-bar-wrap"><div class="sum-bar" id="sum-bar-far"></div></div>
+          </div>
+          <div class="summary-item" id="sum-parking">
+            <div class="sum-label">주차대수</div>
+            <div class="sum-value" id="sum-val-parking">—</div>
+            <div class="sum-limit" id="sum-limit-parking">법정: —</div>
+          </div>
+          <div class="summary-item" id="sum-community">
+            <div class="sum-label">주민공동시설</div>
+            <div class="sum-value" id="sum-val-community">—</div>
+            <div class="sum-limit" id="sum-limit-community">의무: —</div>
+          </div>
+        </div>
+      </div>
+
+    </div><!-- /wizard-scroll -->
+  </aside>
+
+  <!-- ── RIGHT CONTENT PANEL ── -->
+  <main class="content-panel">
+
+    <!-- 탭 바 -->
+    <div class="tab-bar no-print">
+      <button class="tab-btn active" data-tab="map">
+        <i class="fa-solid fa-map"></i> 지도에서 대지 선택
+      </button>
+      <button class="tab-btn" data-tab="overview">
+        <i class="fa-solid fa-file-lines"></i> 건축개요 미리보기
+      </button>
+      <button class="tab-btn" data-tab="legal">
+        <i class="fa-solid fa-scale-balanced"></i> 법적 검토
+      </button>
+    </div>
+
+    <!-- 탭1: 지도 -->
+    <div class="tab-content active" id="tab-map">
+      <div id="kakao-map-container" style="flex: 1; width: 100%; min-height: 400px; position: relative;">
+        <!-- API Key가 없을 때 보여줄 안내 메시지 -->
+        {% if not kakao_api_key %}
+        <div class="api-key-warning">
+          <i class="fa-solid fa-triangle-exclamation" style="font-size: 2rem; color: #f59e0b; margin-bottom: 10px;"></i>
+          <h3>카카오맵 API Key가 필요합니다</h3>
+          <p>app.py 파일의 <code>KAKAO_API_KEY</code> 변수에 발급받은 키를 입력해주세요.</p>
+          <a href="https://apis.map.kakao.com/web/guide/" target="_blank" class="btn-guide">키 발급 가이드 보기</a>
+        </div>
+        {% else %}
+        <!-- 지도 컨테이너 -->
+        <div id="kakao-map" style="width: 100%; height: 100%;"></div>
+        <!-- 상단 우측 컨트롤 (지적도 토글) -->
+        <div class="map-controls no-print">
+          <button id="btn-toggle-district" class="btn-map-control active" title="지적편집도 On/Off">
+            <i class="fa-solid fa-layer-group"></i> 지적도
+          </button>
+        </div>
+        <!-- 하단 우측 컨트롤 (구역계 취소 및 확정) -->
+        <div class="map-bottom-controls no-print">
+          <button id="btn-clear-boundary" class="btn-map-control btn-danger-map" title="선택한 필지를 모두 취소합니다">
+            <i class="fa-solid fa-trash-can"></i> 구역계 취소
+          </button>
+          <button id="btn-confirm-boundary" class="btn-map-control btn-success-map" title="선택한 구역계를 확정합니다">
+            <i class="fa-solid fa-check"></i> 구역계 확정
+          </button>
+        </div>
+        {% endif %}
+      </div>
+      <!-- 필지 경계 탐지 상태 바 -->
+      <div id="parcel-status" class="parcel-status parcel-idle">
+        <i class="fa-solid fa-hand-pointer"></i>
+        지도를 클릭하여 여러 필지를 선택한 후 '구역계 확정' 버튼을 눌러주세요.
+      </div>
+    </div>
+
+    <!-- 탭2: 건축개요 미리보기 (인쇄 대상) -->
+    <div class="tab-content" id="tab-overview">
+      <div class="print-area" id="print-document">
+
+        <div class="doc-header">
+          <h1 id="doc-main-title">설계개요 및 면적 산정표</h1>
+          <div class="doc-meta">
+            <span id="doc-project-name-display"></span>
+            <span>출력일: <span id="current-date"></span></span>
+          </div>
+        </div>
+
+        <!-- 1. 기본 설계 개요 -->
+        <section class="doc-section">
+          <h2 class="doc-section-title">1. 설계 개요</h2>
+          <table class="report-table" id="table-overview">
+            <colgroup>
+              <col style="width:12%">
+              <col style="width:22%">
+              <col style="width:33%">
+              <col style="width:33%">
+            </colgroup>
+            <tbody>
+              <tr><th>사업명</th><td colspan="3" id="t-project-name">—</td></tr>
+              <tr><th>대지위치</th><td colspan="3" id="t-location">—</td></tr>
+              <tr>
+                <th>지역지구</th><td id="t-zone">—</td>
+                <th>구조</th><td id="t-structure">—</td>
+              </tr>
+              <tr>
+                <th>주용도</th><td id="t-use">—</td>
+                <th>규모</th><td id="t-scale">—</td>
+              </tr>
+              <tr>
+                <th rowspan="3">대지면적</th>
+                <td>실사용 대지면적</td>
+                <td class="n-r" id="t-land-area">—</td>
+                <td class="n-c t-muted" id="t-land-area-py">—</td>
+              </tr>
+              <tr>
+                <td>기부채납 도로면적</td>
+                <td class="n-r" id="t-contrib-area">—</td>
+                <td class="n-c t-muted" id="t-contrib-area-py">—</td>
+              </tr>
+              <tr>
+                <td>사업구역 총면적</td>
+                <td class="n-r font-bold" id="t-total-area">—</td>
+                <td class="n-c t-muted" id="t-total-area-py">—</td>
+              </tr>
+              <tr>
+                <th>건축면적</th>
+                <td>건축면적 (추정)</td>
+                <td class="n-r" id="t-build-footprint">—</td>
+                <td class="n-c t-muted" id="t-build-footprint-py">—</td>
+              </tr>
+              <tr class="row-highlight">
+                <th>건폐율</th>
+                <td>계획 건폐율</td>
+                <td class="n-r font-bold" id="t-bcr">—</td>
+                <td class="t-info" id="t-bcr-legal">법정: —</td>
+              </tr>
+              <tr class="row-highlight">
+                <th>용적률</th>
+                <td>계획 용적률</td>
+                <td class="n-r font-bold" id="t-far">—</td>
+                <td class="t-info" id="t-far-legal">완화 상한: —</td>
+              </tr>
+              <tr>
+                <th>총 세대수</th>
+                <td colspan="3" class="font-bold" id="t-households">—</td>
+              </tr>
+            </tbody>
+          </table>
+        </section>
+
+        <!-- 2. 연면적 세부 내역 -->
+        <section class="doc-section">
+          <h2 class="doc-section-title">2. 연면적 세부 내역</h2>
+          <table class="report-table" id="table-area">
+            <colgroup>
+              <col style="width:15%"><col style="width:25%">
+              <col style="width:20%"><col style="width:20%"><col style="width:20%">
+            </colgroup>
+            <thead>
+              <tr>
+                <th colspan="2" class="align-center">구분</th>
+                <th class="align-center">지상 (㎡)</th>
+                <th class="align-center">지하 (㎡)</th>
+                <th class="align-center">합계 (㎡)</th>
+              </tr>
+            </thead>
+            <tbody id="area-table-body">
+              <!-- JS 동적 렌더링 -->
+            </tbody>
+          </table>
+        </section>
+
+        <!-- 3. 단위세대 면적표 -->
+        <section class="doc-section" id="section-unit-table">
+          <h2 class="doc-section-title">3. 단위세대 면적표</h2>
+          <table class="report-table compact-table" id="table-units">
+            <thead>
+              <tr>
+                <th class="align-center" rowspan="2">타입</th>
+                <th class="align-center" rowspan="2">세대수</th>
+                <th class="align-center" rowspan="2">비율</th>
+                <th class="align-center" rowspan="2">전용면적 (㎡)</th>
+                <th class="align-center" colspan="2">주거공용</th>
+                <th class="align-center font-bold" rowspan="2">공급면적 (㎡)</th>
+                <th class="align-center" rowspan="2">공급면적 (평)</th>
+                <th class="align-center" rowspan="2">전용률</th>
+              </tr>
+              <tr>
+                <th class="align-center">벽체공유</th>
+                <th class="align-center">기타공용</th>
+              </tr>
+            </thead>
+            <tbody id="unit-table-body">
+              <!-- JS 동적 렌더링 -->
+            </tbody>
+            <tfoot id="unit-table-foot"></tfoot>
+          </table>
+        </section>
+
+      </div><!-- /print-area -->
+    </div><!-- /tab-overview -->
+
+    <!-- 탭3: 법적 검토 -->
+    <div class="tab-content" id="tab-legal">
+      <div class="legal-panel-content">
+        <h2 class="legal-main-title"><i class="fa-solid fa-gavel"></i> 주요 법적 기준 검토</h2>
+        <p class="legal-subtitle">주택건설기준 등에 관한 규정 및 국계법 기준으로 자동 검토합니다</p>
+
+        <!-- 건폐율·용적률 -->
+        <div class="legal-group">
+          <h3 class="legal-group-title">건폐율 / 용적률</h3>
+          <div class="legal-cards" id="legal-cards-ratio">
+            <div class="legal-card" id="lc-bcr">
+              <div class="lc-icon"><i class="fa-solid fa-ruler-horizontal"></i></div>
+              <div class="lc-body">
+                <div class="lc-label">건폐율</div>
+                <div class="lc-values">
+                  <span class="lc-calc" id="lc-bcr-calc">—</span>
+                  <span class="lc-sep">vs</span>
+                  <span class="lc-legal" id="lc-bcr-legal">법정 —</span>
+                </div>
+              </div>
+              <div class="lc-badge" id="lc-bcr-badge">—</div>
+            </div>
+            <div class="legal-card" id="lc-far">
+              <div class="lc-icon"><i class="fa-solid fa-layer-group"></i></div>
+              <div class="lc-body">
+                <div class="lc-label">용적률</div>
+                <div class="lc-values">
+                  <span class="lc-calc" id="lc-far-calc">—</span>
+                  <span class="lc-sep">vs</span>
+                  <span class="lc-legal" id="lc-far-legal">완화 상한 —</span>
+                </div>
+              </div>
+              <div class="lc-badge" id="lc-far-badge">—</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- 주차 -->
+        <div class="legal-group">
+          <h3 class="legal-group-title">주차 기준</h3>
+          <table class="legal-table" id="legal-table-parking">
+            <thead>
+              <tr><th>항목</th><th>법적 기준</th><th>산출 기준값</th><th>계획값</th><th>적합</th></tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>총 주차대수</td>
+                <td>85㎡이하: 세대×㎡/85<br>85㎡초과: 세대×㎡/70</td>
+                <td class="n-r" id="lt-legal-park">—</td>
+                <td class="n-r" id="lt-actual-park">—</td>
+                <td class="align-center" id="lt-park-status">—</td>
+              </tr>
+              <tr>
+                <td>확장형 주차 (30% 이상)</td>
+                <td>총 주차대수의 30% 이상</td>
+                <td class="n-r" id="lt-expand-park">—</td>
+                <td class="n-r">계획에 따라 확인</td>
+                <td class="align-center">권장</td>
+              </tr>
+              <tr>
+                <td>전기차 주차 (5% 이상)</td>
+                <td>총 주차대수의 5% 이상</td>
+                <td class="n-r" id="lt-ev-park">—</td>
+                <td class="n-r">계획에 따라 확인</td>
+                <td class="align-center">의무</td>
+              </tr>
+              <tr>
+                <td>장애인 주차 (3% 이상)</td>
+                <td>총 주차대수의 3% 이상</td>
+                <td class="n-r" id="lt-disabled-park">—</td>
+                <td class="n-r">계획에 따라 확인</td>
+                <td class="align-center">의무</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <!-- 복리시설 -->
+        <div class="legal-group">
+          <h3 class="legal-group-title">부대복리시설 의무 면적</h3>
+          <table class="legal-table" id="legal-table-amenity">
+            <thead>
+              <tr><th>항목</th><th>적용 기준</th><th>의무 면적 (㎡)</th><th>계획 면적 (㎡)</th><th>적합</th></tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>주민공동시설 합계</td>
+                <td>100~1000세대: 세대수×2.5㎡<br>1000세대 이상: 500+세대수×2㎡</td>
+                <td class="n-r" id="lt-community-legal">—</td>
+                <td class="n-r" id="lt-community-actual">—</td>
+                <td class="align-center" id="lt-community-status">—</td>
+              </tr>
+              <tr>
+                <td>경로당</td>
+                <td>150세대 이상: 50+(세대수×0.1)㎡</td>
+                <td class="n-r" id="lt-senior-legal">—</td>
+                <td class="n-r" id="lt-senior-actual">—</td>
+                <td class="align-center" id="lt-senior-status">—</td>
+              </tr>
+              <tr>
+                <td>어린이집</td>
+                <td>300세대 이상: 30+(세대수×0.05×4.29)㎡</td>
+                <td class="n-r" id="lt-kinder-legal">—</td>
+                <td class="n-r" id="lt-kinder-actual">—</td>
+                <td class="align-center" id="lt-kinder-status">—</td>
+              </tr>
+              <tr>
+                <td>어린이 놀이터</td>
+                <td>300세대 이상: 200+세대수×1㎡</td>
+                <td class="n-r" id="lt-playground-legal">—</td>
+                <td class="n-r">별도 확인 필요</td>
+                <td class="align-center">의무</td>
+              </tr>
+              <tr>
+                <td>조경면적</td>
+                <td id="lt-green-std">대지면적 × 20% (주거지역)</td>
+                <td class="n-r" id="lt-green-legal">—</td>
+                <td class="n-r">별도 확인 필요</td>
+                <td class="align-center">의무</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <p class="legal-note">
+          <i class="fa-solid fa-triangle-exclamation"></i>
+          위 기준은 주택건설기준 등에 관한 규정 및 국계법 기준이며, 지자체 조례나 지구단위계획에 따라 달라질 수 있습니다. 반드시 실무 담당자에게 재확인하세요.
+        </p>
+      </div>
+    </div><!-- /tab-legal -->
+
+  </main>
+</div><!-- /app-layout -->
+
+<!-- 검색 로딩 스피너 (전역) -->
+<div class="loading-overlay" id="loading-overlay" style="display:none;">
+  <div class="spinner"></div>
+  <span>주소를 검색 중입니다...</span>
+</div>
+
+<!-- JS 모듈 로드 순서 중요: zones → calculator → map → main -->
+<script src="{{ url_for('static', filename='js/zones.js') }}?v=8"></script>
+<script src="{{ url_for('static', filename='js/calculator.js') }}?v=8"></script>
+<script src="{{ url_for('static', filename='js/map.js') }}?v=8"></script>
+<script src="{{ url_for('static', filename='js/main.js') }}?v=8"></script>
+</body>
+</html>

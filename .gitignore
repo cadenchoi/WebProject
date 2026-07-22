@@ -1,0 +1,8 @@
+__pycache__/
+*.pyc
+.venv/
+venv/
+scratch/
+*.xlsx
+.DS_Store
+.claude/settings.local.json
