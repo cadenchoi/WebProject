@@ -1,0 +1,13 @@
+__pycache__/
+*.pyc
+.venv/
+venv/
+scratch/
+*.xlsx
+.DS_Store
+.claude/settings.local.json
+
+# 중첩된 별개 git 저장소(각자 .git 보유) — 이 저장소의 일부가 아니므로 제외
+/WebProject/
+/가설계프로젝트/
+/건축개요/
