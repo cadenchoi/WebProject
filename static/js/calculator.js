@@ -315,24 +315,26 @@ function buildComboUnits(comboKey, cx, cy, baseRotationDeg, uw, bd) {
 }
 
 /**
- * 주어진 적층방향(stackDir)·폭방향(widthDir)으로, 9종 조합 카탈로그만 후보로 삼아 행(row)
- * 단위로 그리디하게 채워나간다(GA 없이 한 번에 배치하는 빠른 근사). 행 안에서는 커서를
- * 왼쪽부터 오른쪽으로 옮기며, primaryComboKey가 있으면 그 조합을 먼저 시도하고 안 맞으면
- * (회전 2종 모두 실패) 나머지 8종을 순서대로 시도해 그 커서 위치에 실제로 들어가는 조합을
- * 채택한다 — "한 조합 위주, 부족하면 다른 조합 혼합" 요구사항을 GA 없이도 만족시키는 빠른
- * 근사. 커서는 채택된 조합의 실측 폭만큼만 전진하고(고정 격자 칸이 아니다), 다음 행은 이번
- * 행에서 실제로 배치된 동들 중 가장 깊이 뻗은 지점을 기준으로 시작한다.
+ * 주어진 적층방향(stackDir)·폭방향(widthDir)으로, allowedComboKeys(화면에서 도형을 보고
+ * 다중선택한 조합 목록)만 후보로 삼아 행(row) 단위로 그리디하게 채워나간다(GA 없이 한
+ * 번에 배치하는 빠른 근사). 행 안에서는 커서를 왼쪽부터 오른쪽으로 옮기며, allowedComboKeys
+ * 안에서만 순서대로 시도해 그 커서 위치에 실제로 들어가는 조합을 채택한다 — 예전에는
+ * primaryComboKey 하나를 먼저 시도하고 안 맞으면 선택 여부와 무관하게 나머지 8종까지
+ * 전부 시도하는 "소프트 폴백"이었지만, 이제는 사용자가 고르지 않은 조합은 아예 후보에서
+ * 빠지는 하드 제한이다(massing.py의 GA도 동일하게 allowedComboKeys로 제한된다 —
+ * "선택한 조합들로 실제 배치를 만들어낸다"는 요구사항). 커서는 채택된 조합의 실측 폭만큼만
+ * 전진하고(고정 격자 칸이 아니다), 다음 행은 이번 행에서 실제로 배치된 동들 중 가장
+ * 깊이 뻗은 지점을 기준으로 시작한다.
  *
  * 이전 버전은 9종 중 가장 넓게 퍼지는 조합(주로 6호) 기준의 "고정 격자 칸"을 만들어 그 안에
  * 아무 조합이나 끼워 넣는 방식이었다 — 어떤 조합을 골라도 옆 칸과 겹치지 않는다는 안전은
- * 확보되지만, comboMode='auto'처럼 실제로는 작은 조합(2호 등)이 대부분 선택되는 경우에도
- * 칸 크기 자체가 가장 큰 조합 기준으로 고정돼 있어 같은 대지에 훨씬 적은 동수만 들어가는
- * 것으로 계산됐다(실측: 150×100m 대지에서 실제로는 20개 동이 들어가는데 4개 동으로 과소
- * 산정 — 그 결과 목표 세대수를 채우기 위한 "필요층수"가 5배 가까이 부풀려졌다). massing.py/
- * universal_site_layout.py에서 이미 검증한 "실제 배치된 크기만큼만 커서를 전진시키는" 그리디
- * 패킹 방식으로 바꿔 이 낭비를 없앴다.
+ * 확보되지만, 여러 조합이 섞이는 경우에도 칸 크기 자체가 가장 큰 조합 기준으로 고정돼 있어
+ * 같은 대지에 훨씬 적은 동수만 들어가는 것으로 계산됐다(실측: 150×100m 대지에서 실제로는
+ * 20개 동이 들어가는데 4개 동으로 과소 산정 — 그 결과 목표 세대수를 채우기 위한 "필요층수"가
+ * 5배 가까이 부풀려졌다). massing.py/universal_site_layout.py에서 이미 검증한 "실제 배치된
+ * 크기만큼만 커서를 전진시키는" 그리디 패킹 방식으로 바꿔 이 낭비를 없앴다.
  */
-function estimateComboLayout(poly, lat0, stackDir, widthDir, { bldgDepth, buildingGap, unitWidth, unitTypeList, primaryComboKey, maxFootprintM2 }) {
+function estimateComboLayout(poly, lat0, stackDir, widthDir, { bldgDepth, buildingGap, unitWidth, unitTypeList, allowedComboKeys, maxFootprintM2 }) {
   const origin = polygonCentroidApprox(poly);
   const toLocal = p => [
     (p[0] - origin[0]) * widthDir[0] + (p[1] - origin[1]) * widthDir[1],
@@ -350,12 +352,10 @@ function estimateComboLayout(poly, lat0, stackDir, widthDir, { bldgDepth, buildi
 
   const types = (unitTypeList && unitTypeList.length > 0) ? unitTypeList : [{ name: '유닛', supplyArea: 0, count: 1 }];
   const assignedCounts = types.map(() => 0);
-  // 고정 격자가 아니므로 "칸 크기를 작게 유지하기 위해 큰 조합을 폴백에서 제외"할 필요가
-  // 없다 — 커서가 실제 배치분만큼만 전진하니, primaryComboKey가 작은 조합이어도 그 자리에
-  // 안 맞으면 더 큰 조합이 대신 들어갈 수 있고, 그만큼 빈 자리가 줄어든다.
-  const tryOrder = (primaryComboKey && UNIT_COMBO_KEYS.includes(primaryComboKey))
-    ? [primaryComboKey, ...UNIT_COMBO_KEYS.filter(k => k !== primaryComboKey)]
-    : UNIT_COMBO_KEYS;
+  // allowedComboKeys가 이 커서 위치에서 실제로 시도할 조합의 전부다(하드 제한) — 사용자가
+  // 고르지 않은 조합은 그 자리에 다른 후보가 하나도 안 맞아도 대신 채택되지 않는다.
+  const filteredAllowed = (allowedComboKeys || []).filter(k => UNIT_COMBO_KEYS.includes(k));
+  const tryOrder = filteredAllowed.length > 0 ? filteredAllowed : UNIT_COMBO_KEYS;
 
   // 채광창은 각 유닛의 긴 변(전면, 대지 전체가 공유하는 한 방향)에만 있다 — 다음 행(stackDir
   // 방향, 전면끼리 마주볼 수 있음)은 높이 비례 인동간격(buildingGap)을, 같은 행 안 동끼리
@@ -496,7 +496,7 @@ function estimateComboLayout(poly, lat0, stackDir, widthDir, { bldgDepth, buildi
 function estimatePolygonLayout({
   buildableEnvelope, envelopeEdges, totalHouseholds,
   assumedHeight, northSetbackRatio, buildingGapRatio,
-  standardBuildingDepth, standardUnitWidth, comboMode,
+  standardBuildingDepth, standardUnitWidth, comboModes,
   unitTypeList, landArea, legalBcrMax, applyNorthSetback
 }) {
   if (!buildableEnvelope) return null;
@@ -562,8 +562,13 @@ function estimatePolygonLayout({
   // 생활주택만 0.25배이고, 그 외(이 앱이 다루는 일반 공동주택)는 지역 불문 항상 0.5배다 —
   // 사용자 확인(2026-07-26, 법조문 인용): 준주거지역이어도 동간 거리는 0.5배를 유지해야 한다.
   const buildingGap = assumedHeight * INTER_BUILDING_GAP_RATIO;
-  const primaryComboKey = (comboMode && comboMode !== 'auto' && UNIT_COMBO_KEYS.includes(comboMode)) ? comboMode : null;
-  const buildingShape = primaryComboKey ? UNIT_COMBO_DISPLAY_NAMES[primaryComboKey] : '자동(9종 혼합)';
+  // comboModes(화면에서 다중선택한 조합 목록)가 없거나 전부 무효하면 방어적으로 9종 전체를
+  // 허용한다 — massing.py optimize_massing과 동일한 폴백 규칙.
+  const allowedComboKeysFiltered = (Array.isArray(comboModes) ? comboModes : []).filter(k => UNIT_COMBO_KEYS.includes(k));
+  const allowedComboKeys = allowedComboKeysFiltered.length > 0 ? allowedComboKeysFiltered : UNIT_COMBO_KEYS;
+  const buildingShape = allowedComboKeys.length < UNIT_COMBO_KEYS.length
+    ? allowedComboKeys.map(k => UNIT_COMBO_DISPLAY_NAMES[k]).join('/')
+    : '9종 조합 자유 혼합';
 
   if (poly.length < 3) {
     return {
@@ -608,7 +613,7 @@ function estimatePolygonLayout({
   const unitTypeListScaled = attachPerTypeUnitWidths(unitTypeList, unitWidth);
   // 건폐율 상한 — 없으면(구버전 호출부 등) 무제한으로 취급해 기존 동작을 유지한다.
   const maxFootprintM2 = (num(landArea) > 0 && num(legalBcrMax) > 0) ? num(landArea) * num(legalBcrMax) / 100 : Infinity;
-  const bandParams = { bldgDepth, buildingGap, unitWidth, unitTypeList: unitTypeListScaled, primaryComboKey, maxFootprintM2 };
+  const bandParams = { bldgDepth, buildingGap, unitWidth, unitTypeList: unitTypeListScaled, allowedComboKeys, maxFootprintM2 };
 
   // ── ③ 9종 조합 카탈로그로 장변/단변 두 방향 후보를 모두 채워보고 층당 세대수가 더 많은 쪽 채택 ──
   const resultA = estimateComboLayout(poly, lat0, stackDirA, widthDirA, bandParams);
@@ -697,11 +702,14 @@ function calculate(inputs) {
     standardBuildingDepth = 10,      // 표준 동 깊이 (m, 전용 84㎡ 기준 — 실제 평균 전용면적 비율로 자동 스케일)
     standardUnitWidth = 15,          // 표준 세대 폭 (m, 전용 84㎡ 기준 — 실제 평균 전용면적 비율로 자동 스케일)
     coreWidth = 10,                  // 코어(계단실+승강기) 폭 (m) — 참고용, 9종 조합 배치에는 쓰이지 않음
-    comboMode = 'auto',              // 'auto' | 2호/3호/4호-a/4호-b/4호-c/4호-d/5호-a/5호-b/6호
-                                      // ('auto'=9종 조합 자유 혼합, 특정 조합 선택시 그 조합 위주로 배치)
+    comboModes = null,                // 화면에서 다중선택한 조합 배열(2호/3호/4호-a/4호-b/4호-c/4호-d/
+                                      // 5호-a/5호-b/6호 중 1개 이상) — 비어있거나 없으면 9종 전체 허용
     // 층별 층고 (mm) — 인동간격·채광사선·정북이격의 예상높이 산정에 사용, 미입력 시 2900mm
     floorHeight1Mm = null, floorHeight2Mm = null, floorHeight3Mm = null, floorHeightTypicalMm = null
   } = inputs;
+
+  // 여러 조례 수치(조경비율·주차대수 근거 등)가 안산시인지에 따라 갈리므로 한 번만 판별해둔다.
+  const cityIsAnsan = (address || '').includes('안산');
 
   // ── 세대 집계 ─────────────────────────────────────────
   const totalHouseholds = unitTypes.reduce((s, t) => s + num(t.count), 0);
@@ -741,8 +749,13 @@ function calculate(inputs) {
         legalParkingCalc += (t.count * t.areaEx) / 70;
       }
     });
-    legalParkingCount = Math.ceil(legalParkingCalc);
-    parkingLegalSource = '주택건설기준 등에 관한 규정';
+    // 전용면적 비례 산식만 적용하면 소형평형(예: 59㎡ → 0.69대) 비중이 높을 때
+    // 세대수보다 적게 나올 수 있다 — 안산시 주차장 조례 별표5(제15조 관련) 5호는
+    // "세대당 주차대수가 1대 이상이 되도록 하여야 한다"는 최소기준을 별도로 두고
+    // 있으므로(전국 공통인 주택건설기준 등에 관한 규정과 동일한 산식·문구), 면적
+    // 비례 산정치와 세대수 중 큰 쪽을 법정대수로 한다.
+    legalParkingCount = Math.max(Math.ceil(legalParkingCalc), totalHouseholds);
+    parkingLegalSource = cityIsAnsan ? '안산시 주차장 조례 별표5' : '주택건설기준 등에 관한 규정';
   }
 
   // ── 계획 주차대수 (배수 방식 또는 세대당 대수 방식) ────
@@ -912,6 +925,15 @@ function calculate(inputs) {
   const totalFloorArea = aboveGroundTotal + undergroundTotal;
   const farBaseArea = aboveGroundTotal;
 
+  // ── 조경면적 비율 산정기준 ────────────────────────────────────────
+  // 기본값(용도지역 주거/상업 구분에 따른 20%/15%)은 여러 지자체에 흔한 방식이지만,
+  // 안산시는 안산시 건축 조례 제25조에 따라 용도지역과 무관하게 "연면적 합계"
+  // 구간별로 비율이 달라진다(2,000㎡ 이상 15%, 1,000㎡ 이상 2,000㎡ 미만 10%,
+  // 1,000㎡ 미만 5%) — 실제 안산시 초지동 604-4 프로젝트 검토 중 확인됨(사용자
+  // 피드백: 기존 주거/상업 구분 로직이 안산시 실제 조례와 다르다).
+  const ansanGreenRatio = totalFloorArea >= 2000 ? 0.15 : (totalFloorArea >= 1000 ? 0.10 : 0.05);
+  const greenRatioFor = (category) => cityIsAnsan ? ansanGreenRatio : ((category === '주거') ? 0.20 : 0.15);
+
   // ─────────────────────────────────────────────────────────────────
   // ── 국토의 계획 및 이용에 관한 법률 제84조 구현 ──────────────────
   //   둘 이상의 용도지역에 걸치는 대지에 대한 적용 기준
@@ -977,7 +999,8 @@ function calculate(inputs) {
         bcr: z.bcrMax,
         far: z.farMax,
         source: z.source,
-        category: z.category
+        category: z.category,
+        verified: z.verified
       });
     });
 
@@ -990,7 +1013,7 @@ function calculate(inputs) {
         sumBcr     += w * z.bcrMax;
         sumFar     += w * z.farMax;
         sumFarBase += w * z.farBase;
-        sumGreen   += w * (z.category === '주거' ? 0.20 : 0.15);
+        sumGreen   += w * greenRatioFor(z.category);
       });
       rawBcrMax    = Math.round(sumBcr * 100) / 100;
       rawFarMax    = Math.round(sumFar * 100) / 100;
@@ -1017,7 +1040,7 @@ function calculate(inputs) {
         sumAllowedFootprint += allowedFootprint;
         sumAllowedFloorArea += allowedFloorArea;
         sumFarBase += allowedFarBase;
-        sumGreen += z.area * (z.category === '주거' ? 0.20 : 0.15);
+        sumGreen += z.area * greenRatioFor(z.category);
         independentZones.push({
           name: z.name,
           area: z.area,
@@ -1045,8 +1068,8 @@ function calculate(inputs) {
     rawBcrMax    = lim.bcrMax;
     rawFarMax    = lim.farMax;
     rawFarBase   = lim.farBase;
-    rawGreenRatio = (zoneObj.category === '주거') ? 0.20 : 0.15;
-    zoneBreakdown.push({ name: zName, area: num(area), bcr: lim.bcrMax, far: lim.farMax, source: lim.source, category: zoneObj.category });
+    rawGreenRatio = greenRatioFor(zoneObj.category);
+    zoneBreakdown.push({ name: zName, area: num(area), bcr: lim.bcrMax, far: lim.farMax, source: lim.source, category: zoneObj.category, verified: lim.verified });
   } else {
     // ── 용도지역 미지정 (zoneName fallback) ────────────────────
     multiZoneMethod = 'single';
@@ -1058,8 +1081,8 @@ function calculate(inputs) {
     rawBcrMax    = lim.bcrMax;
     rawFarMax    = lim.farMax;
     rawFarBase   = lim.farBase;
-    rawGreenRatio = (zone.category === '주거') ? 0.20 : 0.15;
-    if (zoneName) zoneBreakdown.push({ name: zoneName, area: landArea, bcr: lim.bcrMax, far: lim.farMax, source: lim.source });
+    rawGreenRatio = greenRatioFor(zone.category);
+    if (zoneName) zoneBreakdown.push({ name: zoneName, area: landArea, bcr: lim.bcrMax, far: lim.farMax, source: lim.source, verified: lim.verified });
   }
 
   // ── 법적 상한 (수동 덮어쓰기 우선) ─────────────────
@@ -1082,6 +1105,15 @@ function calculate(inputs) {
     legalGreenRatio = num(localGreenRatioOverride) / 100; // 입력은 %(예: 20), 내부적으로는 비율(0.20)로 환산
   }
   const legalGreenArea = usableLandArea * legalGreenRatio;
+  const greenLegalBasis = (num(localGreenRatioOverride) > 0)
+    ? `대지면적×${(legalGreenRatio * 100).toFixed(0)}% 이상 (조례 직접입력)`
+    : cityIsAnsan
+      ? (totalFloorArea >= 2000
+          ? '연면적 합계 2,000㎡ 이상 — 대지면적×15% 이상 (안산시 건축 조례 제25조)'
+          : totalFloorArea >= 1000
+            ? '연면적 합계 1,000㎡ 이상 2,000㎡ 미만 — 대지면적×10% 이상 (안산시 건축 조례 제25조)'
+            : '연면적 합계 1,000㎡ 미만 — 대지면적×5% 이상 (안산시 건축 조례 제25조)')
+      : `대지면적×${(legalGreenRatio * 100).toFixed(0)}% 이상 (용도지역 주거/상업 구분 기준)`;
 
   // ── 공개공지 (사용자가 대상으로 지정한 경우만) ──────────
   const openspaceRatio = num(localOpenspaceRatioOverride) > 0 ? num(localOpenspaceRatioOverride) : 5;
@@ -1150,7 +1182,7 @@ function calculate(inputs) {
           buildableEnvelope, envelopeEdges, totalHouseholds, assumedHeight: h,
           northSetbackRatio, buildingGapRatio: effectiveBuildingGapRatio, applyNorthSetback,
           standardBuildingDepth: scaledBuildingDepth, standardUnitWidth: scaledUnitWidth,
-          comboMode, landArea, legalBcrMax,
+          comboModes, landArea, legalBcrMax,
           unitTypeList: unitResults.filter(t => t.count > 0).map(t => ({ name: t.name, supplyArea: t.supplyArea, count: t.count }))
         });
       } else if (siteDimensions && siteDimensions.widthEW > 0 && siteDimensions.depthNS > 0 && totalHouseholds > 0) {
@@ -1312,7 +1344,7 @@ function calculate(inputs) {
     totalAmenityArea, amenityPerHouseholdPy,
     communityExerciseRequired, exerciseLegalBasis,
     legalPlaygroundArea, legalPlaygroundText, playgroundLegalBasis,
-    legalGreenArea, legalGreenRatio,
+    legalGreenArea, legalGreenRatio, greenLegalBasis,
     openspaceTarget, legalOpenspaceArea, openspaceRatio,
     legalWaterTankVolume,
 

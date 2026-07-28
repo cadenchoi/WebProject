@@ -382,6 +382,62 @@ input::-webkit-inner-spin-button { -webkit-appearance: none; }
   align-items: center;
   gap: 4px;
 }
+
+/* 조합 선택 — 9종 주동 유형을 도형으로 보고 고르는 다중선택 카드 그리드 */
+.combo-picker-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+}
+.combo-picker-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 8px 4px;
+  background: var(--bg-input);
+  border: 1.5px solid var(--border);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: border-color 0.15s, box-shadow 0.15s, background 0.15s;
+  user-select: none;
+}
+.combo-picker-card:hover { border-color: var(--primary); }
+.combo-picker-card.is-checked {
+  border-color: var(--primary);
+  background: var(--primary-glow);
+  box-shadow: var(--glow-blue);
+}
+.combo-picker-card input[type="checkbox"] {
+  position: absolute;
+  opacity: 0;
+  width: 0;
+  height: 0;
+}
+.combo-thumb-svg {
+  width: 44px;
+  height: 44px;
+  overflow: visible;
+}
+.combo-thumb-svg polygon {
+  fill: var(--primary-glow);
+  stroke: var(--primary);
+  stroke-width: 3;
+}
+.combo-picker-card.is-checked .combo-thumb-svg polygon {
+  fill: var(--primary);
+  stroke: var(--primary-hover);
+}
+.combo-picker-name {
+  font-size: 0.68rem;
+  color: var(--text-sub);
+  text-align: center;
+  line-height: 1.2;
+}
+.combo-picker-card.is-checked .combo-picker-name {
+  color: var(--text-main);
+  font-weight: 600;
+}
 .field-hint i { color: var(--accent); }
 
 /* 8. 주소 검색 */

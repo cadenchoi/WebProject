@@ -23,6 +23,7 @@ let lastResult = null; // 가장 최근 calculate() 결과 (세대당 목표 평
 document.addEventListener('DOMContentLoaded', () => {
   initZoneDropdown();
   renderUnitTypes();
+  renderComboPicker();
   initMap('kakao-map', onMapLocationSelect);
   bindEvents();
   setTodayDate();
@@ -93,6 +94,68 @@ function renderUnitTypes() {
       recalculate();
     });
   });
+}
+
+/* ═══════════════════════════════════════════════════
+   3-1. 조합 선택 UI (9종 주동 유형 시각 다중선택)
+   ═══════════════════════════════════════════════════ */
+/** comboKey 하나의 로컬 유닛 배치(calculator.js의 UNIT_COMBO_BUILDERS, massing.py와 동일 정의)를
+ * 그대로 써서 작은 도형 미리보기 SVG를 만든다 — 실제 배치 결과와 똑같은 모양이어야 사용자가
+ * "이 조합을 선택하면 이런 형태가 나온다"를 정확히 알 수 있다(대표값 uw=15,bd=10으로 그리며,
+ * 실제 최적화 시에는 세대타입 공급면적에 비례해 폭이 다시 스케일된다 — 여기서는 형태 확인용). */
+function comboThumbnailSvg(comboKey) {
+  const uw = 15, bd = 10;
+  const units = UNIT_COMBO_BUILDERS[comboKey](uw, bd);
+  const polys = units.map(u => {
+    if (u.diamond) {
+      const r = u.s / Math.sqrt(2);
+      return [[u.cx + r, u.cy], [u.cx, u.cy + r], [u.cx - r, u.cy], [u.cx, u.cy - r]];
+    }
+    const hx = u.sx / 2, hy = u.sy / 2;
+    return [[u.cx - hx, u.cy - hy], [u.cx + hx, u.cy - hy], [u.cx + hx, u.cy + hy], [u.cx - hx, u.cy + hy]];
+  });
+  const allPts = polys.flat();
+  const xs = allPts.map(p => p[0]), ys = allPts.map(p => p[1]);
+  const minX = Math.min(...xs), maxX = Math.max(...xs);
+  const minY = Math.min(...ys), maxY = Math.max(...ys);
+  const w = maxX - minX, h = maxY - minY;
+  const pad = Math.max(w, h) * 0.15 || 1;
+  const vbX = minX - pad, vbY = minY - pad, vbW = w + pad * 2, vbH = h + pad * 2;
+  const polyStrs = polys.map(pts =>
+    `<polygon points="${pts.map(p => `${p[0].toFixed(2)},${p[1].toFixed(2)}`).join(' ')}"/>`
+  ).join('');
+  return `<svg viewBox="${vbX.toFixed(2)} ${vbY.toFixed(2)} ${vbW.toFixed(2)} ${vbH.toFixed(2)}" class="combo-thumb-svg" preserveAspectRatio="xMidYMid meet">${polyStrs}</svg>`;
+}
+
+/** 9개 조합 카드를 그린다 — '자동'은 없고, 기본값은 9개 전부 선택(기존 자동 모드와 동일한
+ * 탐색 범위)이며 사용자가 원하는 조합만 남기고 해제할 수 있다. */
+function renderComboPicker() {
+  const container = document.getElementById('combo-picker-grid');
+  if (!container) return;
+  container.innerHTML = UNIT_COMBO_KEYS.map(key => `
+    <label class="combo-picker-card is-checked">
+      <input type="checkbox" class="combo-picker-checkbox" value="${key}" checked>
+      ${comboThumbnailSvg(key)}
+      <span class="combo-picker-name">${UNIT_COMBO_DISPLAY_NAMES[key]}</span>
+    </label>
+  `).join('');
+  container.querySelectorAll('.combo-picker-checkbox').forEach(cb => {
+    cb.addEventListener('change', onComboPickerChange);
+  });
+}
+
+/** 체크박스가 최소 1개는 항상 켜져 있도록 지키면서(0개면 배치 후보 자체가 없어짐) 카드의
+ * 선택 표시(.is-checked)를 갱신하고 재계산한다. */
+function onComboPickerChange(e) {
+  const checkboxes = Array.from(document.querySelectorAll('.combo-picker-checkbox'));
+  const checkedCount = checkboxes.filter(cb => cb.checked).length;
+  if (checkedCount === 0) {
+    e.target.checked = true; // 마지막 하나는 해제 불가
+    alert('조합을 최소 1개 이상 선택해야 합니다.');
+    return;
+  }
+  checkboxes.forEach(cb => cb.closest('.combo-picker-card').classList.toggle('is-checked', cb.checked));
+  recalculate();
 }
 
 /* ═══════════════════════════════════════════════════
@@ -392,10 +455,6 @@ function bindEvents() {
   const btnOptimize = document.getElementById('btn-optimize-massing');
   if (btnOptimize) btnOptimize.addEventListener('click', runOptimizeMassing);
 
-  // 조합 선택(자동/2호~6호) → 재계산
-  const comboMode = document.getElementById('combo-mode');
-  if (comboMode) comboMode.addEventListener('change', recalculate);
-
   // 도로 후퇴거리 / 대지안의 공지 이격거리 변경 → 건축가능영역 재조회
   ['local-road-setback', 'local-adjacent-setback'].forEach(id => {
     const el = document.getElementById(id);
@@ -501,7 +560,8 @@ function buildCalcInputs() {
     standardBuildingDepth: vn('standard-building-depth'), // 비워두면 전용84 기준 10m을 실제 평균 전용면적 비율로 스케일
     standardUnitWidth:    vn('standard-unit-width'),      // 비워두면 전용84 기준 15m을 실제 평균 전용면적 비율로 스케일
     coreWidth:            v('core-width') || 10,
-    comboMode:            g('combo-mode')?.value || 'auto', // 'auto'(9종 조합 혼합) 또는 2호~6호 중 하나(그 조합 위주 배치)
+    // 사용자가 도형을 보고 다중선택한 주동 유형(1개 이상) — 배치는 이 목록 안에서만 이뤄진다
+    comboModes:           Array.from(document.querySelectorAll('.combo-picker-checkbox:checked')).map(el => el.value),
     // 층별 층고 (mm) — 비워두면 calculator.js에서 2900mm 기본 적용
     floorHeight1Mm:       vn('floor-height-1'),
     floorHeight2Mm:       vn('floor-height-2'),
@@ -533,6 +593,32 @@ function recalculate() {
   if (localFar) localFar.placeholder = `조례: ${r.legalFarMax.toFixed(2)}% 이하`;
 
   // ── 용도지역 정보 배지 동적 업데이트 ─────────────────
+  // 앱에 원문 대조까지 마친 지자체(VERIFIED_CITIES, zones.js)가 아니면 표시되는 수치가
+  // 참고치일 수 있다 — 어느 지자체든 사용자가 그 자리에서 바로 법제처 국가법령정보센터
+  // 원문을 확인할 수 있는 링크를 함께 보여준다("다른 시에서 작업할 때도 그 지자체에
+  // 맞는 법규를 검토할 수 있게 해달라"는 요청 반영).
+  const ordinanceUrl = buildOrdinanceSearchUrl(inputs.address, 'zoning');
+  const buildingOrdinanceUrl = buildOrdinanceSearchUrl(inputs.address, 'building');
+  const parkingOrdinanceUrl = buildOrdinanceSearchUrl(inputs.address, 'parking');
+  const ordinanceLinksRow = g('ordinance-check-links');
+  const linkBuilding = g('link-building-ordinance');
+  const linkParking = g('link-parking-ordinance');
+  if (ordinanceLinksRow) {
+    if (buildingOrdinanceUrl && parkingOrdinanceUrl) {
+      if (linkBuilding) linkBuilding.href = buildingOrdinanceUrl;
+      if (linkParking) linkParking.href = parkingOrdinanceUrl;
+      ordinanceLinksRow.style.display = '';
+    } else {
+      ordinanceLinksRow.style.display = 'none';
+    }
+  }
+  const ordinanceLinkHtml = ordinanceUrl
+    ? `<div style="grid-column:1/span 3;text-align:right;margin-top:2px;">
+         <a href="${ordinanceUrl}" target="_blank" rel="noopener" style="font-size:0.7rem; color:var(--accent); text-decoration:none;">
+           🔎 이 지자체 조례 원문 확인(법제처)
+         </a>
+       </div>`
+    : '';
   const badge = g('zone-info-badge');
   if (badge) {
     if (!r.zoneBreakdown || r.zoneBreakdown.length === 0) {
@@ -577,11 +663,17 @@ function recalculate() {
           <div style="font-size:0.72rem;color:${methodColor};font-weight:600;margin-bottom:4px;">${methodLabel}</div>
           ${detailRows}
         </div>
+        ${ordinanceLinkHtml}
       `;
       badge.style.display = 'grid';
     } else {
       const z = r.zoneBreakdown[0];
       const zoneObj = getZone(z.name) || { category: '기타', desc: '' };
+      const unverifiedNote = z.verified === false
+        ? `<div style="grid-column:1/span 3;font-size:0.68rem;color:#b45309;background:#fffbeb;border-radius:4px;padding:4px 6px;margin-top:2px;">
+             ⚠ 이 지자체 전용 조례를 아직 원문 대조하지 못해 참고치입니다 — 아래 링크로 실제 조례를 확인해 STEP 01의 "조례 건폐율/용적률 상한"란에 직접 입력하세요.
+           </div>`
+        : '';
       badge.innerHTML = `
         <div class="zone-badge-item">
           <span class="zone-badge-val">${r.legalBcrMax}%</span>
@@ -595,6 +687,8 @@ function recalculate() {
           <span class="zone-badge-val" style="font-size:0.75rem; color:var(--accent);">${zoneObj.category}</span>
           <span class="zone-badge-lbl">${(zoneObj.desc || '').slice(0, 12)}…</span>
         </div>
+        ${unverifiedNote}
+        ${ordinanceLinkHtml}
       `;
       badge.style.display = 'grid';
     }
@@ -857,7 +951,7 @@ async function runOptimizeMassing() {
     standardBuildingDepth: (inputs.standardBuildingDepth || 10) * areaScale,
     standardUnitWidth: (inputs.standardUnitWidth || 15) * areaScale,
     coreWidth: inputs.coreWidth,
-    comboMode: inputs.comboMode,
+    comboModes: inputs.comboModes,
     // massing.py가 정북일조 적용 대상 지역(전용주거·일반주거)인지 판단하는 데 필요 — 준주거 등은
     // 이 조항 자체가 미적용이라 정북 이격을 아예 안 걸어야 한다(main.js도 zoneName을 안 보내면
     // 예전처럼 항상 적용하는 쪽으로 안전 폴백한다).
@@ -873,7 +967,9 @@ async function runOptimizeMassing() {
     legalFarMax: r.legalFarMax,
     relaxedFarLimit: r.relaxedFarLimit,
     avgFarAreaPerHousehold,
-    allowOver50Floors: document.getElementById('allow-over-50-floors')?.checked || false
+    allowOver50Floors: document.getElementById('allow-over-50-floors')?.checked || false,
+    gaWallClockS: Number(document.getElementById('ga-wall-clock-s')?.value) || 180,
+    gaRestarts: Number(document.getElementById('ga-restarts')?.value) || 2
   };
 
   const originalBtnHtml = btn.innerHTML;
@@ -1150,7 +1246,7 @@ function renderOverviewTable(r, t) {
 
   if (r.landArea > 0) {
     g('t-green-area').textContent = sf(r.legalGreenArea) + ' ㎡ 이상';
-    g('t-green-legal').textContent = `법정: 대지면적×${(r.legalGreenRatio * 100).toFixed(0)}% 이상`;
+    g('t-green-legal').textContent = `법정: ${r.greenLegalBasis || (Math.round(r.legalGreenRatio * 100) + '% 이상')}`;
   }
 }
 

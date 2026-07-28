@@ -850,7 +850,8 @@ def evaluate_genome(genome, poly_m_raw, edges_info, to_m, pack_params, legal_bcr
         # 않고, 이후 돌연변이가 그 유닛의 층수를 낮추면 다시 살아날 수 있다).
         combo_key = b.get('comboKey')
         if combo_key not in UNIT_COMBO_BUILDERS:
-            combo_key = UNIT_COMBO_KEYS[0]
+            allowed_fallback = pack_params.get('allowedComboKeys') or UNIT_COMBO_KEYS
+            combo_key = allowed_fallback[0]
         # 동마다 제각각 방향을 고르지 않고 유전자 전체가 공유하는 rotationDeg를 그대로
         # 쓴다 — 실제 단지는 동마다 방향이 들쭉날쭉하지 않고 한 방향(주로 정남향)으로
         # 나란히 줄지어 배치되므로, "대지 전체의 한 방향"이 유일한 회전 자유도다.
@@ -990,30 +991,28 @@ def evaluate_genome(genome, poly_m_raw, edges_info, to_m, pack_params, legal_bcr
     }
 
 
-# 화면에서 조합을 하나 선택(primaryComboKey)하면 combo_bias 확률로 그 조합으로 태어나고,
-# 나머지는 9종 중 아무거나로 태어나 GA가 "이 대지에서는 다른 조합을 섞는 편이 용적률/인동채광
-# 이격을 더 잘 채운다"는 것을 스스로 발견할 여지를 남긴다 — 요구사항(한 조합 위주 배치,
-# 부족하면 다른 조합 혼합)을 유전자 풀 수준에서 구현하는 지점. optimize_massing은 먼저
-# combo_bias=1.0(순수 그 조합만)으로 돌려보고, 그것만으로 용적률 목표에 못 미칠 때만
-# combo_bias=PRIMARY_COMBO_BIAS로 다시 돌려 혼합을 허용한다(그래야 "주로 한 조합" 원칙이
-# GA의 세대수 우선 적합도에 밀려 조기에 다른 조합으로 밀려나지 않는다).
+# primary_combo_key(장르 하나를 강제 지정)가 주어졌을 때 combo_bias 확률로 그 조합으로
+# 태어나게 하는 기본값 — 현재 화면(다중선택 체크박스 그리드)은 primaryComboKey를 보내지
+# 않으므로(항상 None, allowedComboKeys만 보낸다) 이 상수는 run_ga_search가 pack_params에
+# comboBias가 없을 때 쓰는 안전한 기본값으로만 남아 있다. 실제 배치 다양성 조절은
+# DOMINANT_COMBO_BIAS_AUTO와 allowedComboKeys가 담당한다.
 PRIMARY_COMBO_BIAS = 0.85
 
-# evaluate_genome의 sort_key(경쟁 순위 전용 점수)에서 선택한 조합이 아닌 세대에 곱하는 가중치.
-# 1.0이면 조합 순도를 전혀 신경 쓰지 않고 순수 세대수만으로 경쟁해 선택한 조합이 통째로
-# 밀려날 수 있다(실측 확인됨) — 0.5는 "다른 조합이 실제로 두 배 가까이 더 조밀하게 들어가야만
-# 선택한 조합을 밀어낼 가치가 있다"는 뜻으로, 대부분은 선택한 조합 위주를 유지하되 진짜
-# 필요할 때만(충분히 큰 이득이 있을 때만) 섞이도록 한다.
+# evaluate_genome의 sort_key(경쟁 순위 전용 점수)에서, 이 유전자의 dominantComboKey가 아닌
+# 조합으로 지어진 동의 세대수에 곱하는 가중치. 1.0이면 조합 순도를 전혀 신경 쓰지 않고
+# 순수 세대수만으로 경쟁해 지배 조합이 통째로 밀려날 수 있다(실측 확인됨) — 0.5는 "다른
+# 조합이 실제로 두 배 가까이 더 조밀하게 들어가야만 지배 조합을 밀어낼 가치가 있다"는
+# 뜻으로, 대부분은 지배 조합 위주를 유지하되 진짜 필요할 때만(충분히 큰 이득이 있을
+# 때만) 허용된 다른 조합으로 섞이도록 한다.
 NON_PRIMARY_COMBO_WEIGHT = 0.5
 
-# '자동'(comboMode 미선택) 모드에서도 유전자 하나(배치안 하나)는 대체로 하나의 조합만
-# 반복 사용해야 실제 설계 사례처럼 보인다 — 안산 초지동 604-4 실제 설계안(건축사 검토
-# PDF, 350%/400%/450% 세 안 공통)은 대지 하나에 정확히 한 종류의 점형 조합을 6개 동에
-# 그대로 반복했을 뿐, 동마다 형태를 섞지 않았다. 사용자가 comboMode를 직접 고르지
-# 않아도 _random_genome이 유전자가 태어날 때 그 유전자만의 "주 조합"(dominantComboKey)을
-# 하나 무작위로 정해 이 확률로 고수하게 한다 — PRIMARY_COMBO_BIAS(0.85, 사용자가 직접
-# 고른 조합용)보다 조금 더 높게 잡아 자동 모드에서도 "동마다 제각각인 형태"가 나오지
-# 않게 한다.
+# 유전자 하나(배치안 하나)는 사용자가 다중선택한 조합(allowedComboKeys) 중에서도 대체로
+# 하나만 반복 사용해야 실제 설계 사례처럼 보인다 — 안산 초지동 604-4 실제 설계안(건축사
+# 검토 PDF, 350%/400%/450% 세 안 공통)은 대지 하나에 정확히 한 종류의 점형 조합을 6개
+# 동에 그대로 반복했을 뿐, 동마다 형태를 섞지 않았다. _random_genome이 유전자가 태어날
+# 때 허용된 조합 중 그 유전자만의 "지배 조합"(dominantComboKey)을 하나 무작위로 정해 이
+# 확률로 고수하게 한다 — 개체군 전체는 서로 다른 지배 조합을 동시에 시도하므로, 사용자가
+# 여러 조합을 선택했다면 그중 실제로 가장 잘 들어맞는 조합(들)로 자연히 수렴한다.
 DOMINANT_COMBO_BIAS_AUTO = 0.92
 
 # 대지 가장자리(행렬의 첫/끝 행)에 배정되는 목표층수에 곱하는 최소 배율 — 1.0에 가까울수록
@@ -1037,10 +1036,10 @@ EDGE_TYPE_BIAS = 0.6
 CROSSOVER_COMBO_CLEANUP = 0.7
 
 
-def _pick_combo_key(rng, primary_combo_key, combo_bias):
+def _pick_combo_key(rng, primary_combo_key, combo_bias, allowed_combo_keys):
     if primary_combo_key and rng.random() < combo_bias:
         return primary_combo_key
-    return rng.choice(UNIT_COMBO_KEYS)
+    return rng.choice(allowed_combo_keys)
 
 
 def _pick_unit_type_idx(rng, unit_type_list, edge_factor=None):
@@ -1240,8 +1239,8 @@ def _derive_col_lines(col_range, pack_params):
     return [lo + step * (i + 0.5) for i in range(n_cols)]
 
 
-def _random_building(rng, center, stack_dir, width_dir, row_lines, col_range, max_floors_cap, primary_combo_key, combo_bias, unit_type_list=None):
-    combo_key = _pick_combo_key(rng, primary_combo_key, combo_bias)
+def _random_building(rng, center, stack_dir, width_dir, row_lines, col_range, max_floors_cap, primary_combo_key, combo_bias, allowed_combo_keys, unit_type_list=None):
+    combo_key = _pick_combo_key(rng, primary_combo_key, combo_bias, allowed_combo_keys)
     n_units = UNIT_COMBO_UNIT_COUNTS[combo_key]
     row_val, row_target_floors, edge_factor = rng.choice(row_lines)
     col_val = rng.uniform(*col_range)
@@ -1253,19 +1252,22 @@ def _random_building(rng, center, stack_dir, width_dir, row_lines, col_range, ma
     }
 
 
-def _safe_building(center, unit_type_list=None):
-    """항상 존재해야 하는 '안전' 동 — 대지 중심, 최저 층수(1층), 최소 조합(2호)으로 구성해
-    어떤 대지에서도 이격요건을 만족할 가능성을 최대화한다(무작위 초기 개체군이 통째로 죽는
-    사태를 방지). 위치를 대지 중심으로 두는 것만으로는 부족하다 — 그 동에 무작위로 배정된
-    층수·조합이 크면 중심에서도 이격요건을 못 채울 수 있으므로, 크기 자체를 최소로
-    고정한다(comboMode 선택과 무관하게 항상 2호·1층). 세대타입도 폭이 가장 좁은 타입을 골라
-    이격요건을 만족할 가능성을 조금이라도 더 높인다."""
+def _safe_building(center, allowed_combo_keys, unit_type_list=None):
+    """항상 존재해야 하는 '안전' 동 — 대지 중심, 최저 층수(1층), 허용된 조합 중 유닛 수가
+    가장 적은(=가장 작은) 조합으로 구성해 어떤 대지에서도 이격요건을 만족할 가능성을
+    최대화한다(무작위 초기 개체군이 통째로 죽는 사태를 방지). 위치를 대지 중심으로 두는
+    것만으로는 부족하다 — 그 동에 무작위로 배정된 층수·조합이 크면 중심에서도 이격요건을
+    못 채울 수 있으므로, 크기 자체를 최소로 고정한다. 예전에는 항상 '2호'로 고정했는데,
+    사용자가 조합을 다중선택할 때 2호를 선택 해제하면 이 안전장치가 사용자가 고르지
+    않은 조합을 배치해버리는 문제가 있어, 반드시 allowed_combo_keys 안에서만 고른다.
+    세대타입도 폭이 가장 좁은 타입을 골라 이격요건을 만족할 가능성을 조금이라도 더 높인다."""
     unit_type_idx = 0
     if unit_type_list:
         unit_type_idx = min(range(len(unit_type_list)), key=lambda i: num(unit_type_list[i].get('unitWidth')) or float('inf'))
+    safe_key = min(allowed_combo_keys, key=lambda k: UNIT_COMBO_UNIT_COUNTS[k])
     return {
         'x': center[0], 'y': center[1], 'active': True,
-        'comboKey': '2호', 'unitFloors': [1] * UNIT_COMBO_UNIT_COUNTS['2호'], 'unitTypeIdx': unit_type_idx
+        'comboKey': safe_key, 'unitFloors': [1] * UNIT_COMBO_UNIT_COUNTS[safe_key], 'unitTypeIdx': unit_type_idx
     }
 
 
@@ -1289,7 +1291,7 @@ def _sample_floors_near(rng, typical_floors, max_floors_cap):
     return max(1, min(max_floors_cap, round(val)))
 
 
-def _pack_row_greedy(rng, row_val, col_range, max_floors_cap, primary_combo_key, combo_bias, unit_width, bldg_depth, row_target_floors, max_new, unit_type_list, col_lines=None, edge_factor=None):
+def _pack_row_greedy(rng, row_val, col_range, max_floors_cap, primary_combo_key, combo_bias, allowed_combo_keys, unit_width, bldg_depth, row_target_floors, max_new, unit_type_list, col_lines=None, edge_factor=None):
     """한 행(row_val)에 왼쪽부터 그리디로 조합을 채운다(실제 설계에서 한 행에 동이 나란히
     줄지어 들어차는 방식) — _random_building을 행마다 독립적으로 호출해 완전 자유배치하면
     같은 행 안에서 동끼리 무작위로 겹쳐 대부분 이격 위반으로 탈락하는 문제가 있었다(실측
@@ -1314,7 +1316,7 @@ def _pack_row_greedy(rng, row_val, col_range, max_floors_cap, primary_combo_key,
     guard = 0
     while cursor < col_range[1] and len(built) < max_new and guard < 30:
         guard += 1
-        combo_key = _pick_combo_key(rng, primary_combo_key, combo_bias)
+        combo_key = _pick_combo_key(rng, primary_combo_key, combo_bias, allowed_combo_keys)
         span = _approx_combo_span(combo_key, unit_width, bldg_depth)
         if built and cursor + span > col_range[1]:
             break
@@ -1342,11 +1344,14 @@ def _random_genome(rng, poly_m_raw, edges_info, to_m, envelope_cache, max_floors
     # 해서 "저층 다동" 전략과 "고층 소수동" 전략을 개체군이 동시에 시도하게 한다(_derive_row_lines
     # 참고). 3~max_floors_cap 전 구간에서 고르되, 로그 스케일로 뽑아 저층 쪽도 충분히 나오게 한다.
     typical_floors = max(3, round(math.exp(rng.uniform(math.log(3), math.log(max(3, max_floors_cap))))))
+    # 사용자가 다중선택한 조합만 배치 후보다 — 미선택이면(방어적 기본값) 9종 전체.
+    allowed_combo_keys = pack_params.get('allowedComboKeys') or UNIT_COMBO_KEYS
     # dominantComboKey: 이 유전자(배치안 하나)가 대체로 반복 사용할 조합 하나를 정한다 —
-    # 사용자가 comboMode를 직접 골랐으면(primary_combo_key) 그 조합을 그대로 쓰고, '자동'이면
-    # 유전자마다 무작위로 하나 골라 개체군 전체가 서로 다른 "한 조합 반복" 전략을 동시에
-    # 탐색하게 한다(604-4 실제 설계안처럼 한 배치안 안에서는 형태가 섞이지 않는다).
-    dominant_combo_key = primary_combo_key or rng.choice(UNIT_COMBO_KEYS)
+    # 허용된 조합 중에서 무작위로 하나 골라, 개체군 전체가 서로 다른 "한 조합 반복" 전략을
+    # 동시에 탐색하게 한다(604-4 실제 설계안처럼 한 배치안 안에서는 형태가 섞이지 않는다).
+    # 사용자가 조합을 딱 1개만 골랐으면 allowed_combo_keys가 원소 1개뿐이라 자동으로 그
+    # 조합 하나로 고정된다 — 별도 분기가 필요 없다.
+    dominant_combo_key = primary_combo_key or rng.choice(allowed_combo_keys)
     dominant_combo_bias = combo_bias if primary_combo_key else DOMINANT_COMBO_BIAS_AUTO
     center, stack_dir, width_dir, row_range, col_range = _site_frame_for_floors(
         rotation_deg, typical_floors, poly_m_raw, edges_info, to_m, pack_params, envelope_cache)
@@ -1359,7 +1364,7 @@ def _random_genome(rng, poly_m_raw, edges_info, to_m, envelope_cache, max_floors
     for row_val, row_target, edge_factor in row_lines:
         if len(buildings) >= max_buildings:
             break
-        for slot in _pack_row_greedy(rng, row_val, col_range, max_floors_cap, dominant_combo_key, dominant_combo_bias,
+        for slot in _pack_row_greedy(rng, row_val, col_range, max_floors_cap, dominant_combo_key, dominant_combo_bias, allowed_combo_keys,
                                       unit_width, bldg_depth, row_target, max_buildings - len(buildings), unit_type_list, col_lines, edge_factor):
             x, y = _row_col_to_xy(center, stack_dir, width_dir, row_val, slot['colVal'])
             buildings.append({
@@ -1370,7 +1375,7 @@ def _random_genome(rng, poly_m_raw, edges_info, to_m, envelope_cache, max_floors
         # 첫 동은 통째로 "안전 동"으로 교체한다(위치만 옮기는 게 아니라 크기·층수까지 최소로) —
         # 무작위 초기 개체군이 전부 이격 위반으로 죽어 탐색이 아예 아무 배치도 못 찾는 사태를
         # 막는 안전장치.
-        buildings[0] = _safe_building(center, unit_type_list)
+        buildings[0] = _safe_building(center, allowed_combo_keys, unit_type_list)
     return {'rotationDeg': rotation_deg, 'typicalFloors': typical_floors, 'dominantComboKey': dominant_combo_key, 'buildings': buildings}
 
 
@@ -1381,10 +1386,16 @@ def _mutate_genome(parent, rng, poly_m_raw, edges_info, to_m, envelope_cache, ma
     # 전략 사이를 GA가 계속 미세 조정하며 탐색하게 한다(_random_genome 참고).
     prev_typical = parent.get('typicalFloors') or max(3, round(max_floors_cap * 0.5))
     new_typical = max(3, min(max_floors_cap, round(prev_typical + rng.gauss(0, max(2, max_floors_cap * 0.1)))))
+    # 사용자가 다중선택한 조합만 배치 후보다 — 미선택이면(방어적 기본값) 9종 전체.
+    allowed_combo_keys = pack_params.get('allowedComboKeys') or UNIT_COMBO_KEYS
     # dominantComboKey는 부모에서 그대로 물려받는다(한 배치안이 세대를 거치며 형태를 계속
     # 바꾸면 "한 조합 반복" 원칙이 흔들린다) — 사용자가 comboMode를 직접 골랐으면 항상 그
-    # 조합이 우선한다.
-    dominant_combo_key = primary_combo_key or parent.get('dominantComboKey') or rng.choice(UNIT_COMBO_KEYS)
+    # 조합이 우선한다. 부모의 dominantComboKey가 현재 허용집합에 없으면(이론상 불가능하지만
+    # 방어적으로) 허용집합에서 새로 고른다.
+    parent_dominant = parent.get('dominantComboKey')
+    if parent_dominant not in allowed_combo_keys:
+        parent_dominant = None
+    dominant_combo_key = primary_combo_key or parent_dominant or rng.choice(allowed_combo_keys)
     dominant_combo_bias = combo_bias if primary_combo_key else DOMINANT_COMBO_BIAS_AUTO
     center, stack_dir, width_dir, row_range, col_range = _site_frame_for_floors(
         new_rotation, new_typical, poly_m_raw, edges_info, to_m, pack_params, envelope_cache)
@@ -1426,13 +1437,13 @@ def _mutate_genome(parent, rng, poly_m_raw, edges_info, to_m, envelope_cache, ma
         elif 'unitTypeIdx' not in b:
             b['unitTypeIdx'] = _pick_unit_type_idx(rng, unit_type_list, snapped_edge)
 
-        cur_key = b.get('comboKey') if b.get('comboKey') in UNIT_COMBO_BUILDERS else UNIT_COMBO_KEYS[0]
+        cur_key = b.get('comboKey') if b.get('comboKey') in UNIT_COMBO_BUILDERS else allowed_combo_keys[0]
         cur_floors = list(b.get('unitFloors') or [1])
         if rng.random() < 0.15:
             # 조합을 통째로 다른 것으로 바꿔본다(2호↔4호-b 등 — 유닛 수가 바뀔 수 있으므로
             # 층수 리스트도 새로 구성한다). dominantComboKey 쪽으로 되돌아갈 확률이 높다
             # (_pick_combo_key).
-            new_key = _pick_combo_key(rng, dominant_combo_key, dominant_combo_bias)
+            new_key = _pick_combo_key(rng, dominant_combo_key, dominant_combo_bias, allowed_combo_keys)
             n_units = UNIT_COMBO_UNIT_COUNTS[new_key]
             b['comboKey'] = new_key
             b['unitFloors'] = [rng.choice(cur_floors) if cur_floors else rng.randint(1, max_floors_cap) for _ in range(n_units)]
@@ -1469,7 +1480,7 @@ def _mutate_genome(parent, rng, poly_m_raw, edges_info, to_m, envelope_cache, ma
             b['comboKey'] = cur_key
             b['unitFloors'] = cur_floors
     if rng.random() < 0.15 and len(g['buildings']) < max_buildings:
-        g['buildings'].append(_random_building(rng, center, stack_dir, width_dir, row_lines, col_range, max_floors_cap, dominant_combo_key, dominant_combo_bias, pack_params.get('unitTypeList')))
+        g['buildings'].append(_random_building(rng, center, stack_dir, width_dir, row_lines, col_range, max_floors_cap, dominant_combo_key, dominant_combo_bias, allowed_combo_keys, pack_params.get('unitTypeList')))
     if rng.random() < 0.15 and len(g['buildings']) > 2:
         g['buildings'].pop(rng.randrange(len(g['buildings'])))
     return g
@@ -1569,11 +1580,14 @@ def genome_result_to_rows(result, pack_params):
 # 사용자가 "정밀 최적화는 1분 이상 걸려도 상관없다"고 명시함 — 결과 품질(최대 용적률)을
 # 우선해 예산을 넉넉히 잡는다. optimize_massing은 이 예산으로 run_ga_search를 여러 번
 # 재시작(GA_RESTARTS)해 그중 세대수가 가장 높은 배치를 채택한다(예산은 재시작 수만큼 나눠 쓴다).
+# 복잡한 대지(동 수가 많아 유전자 평가 1회당 도형 연산 비용이 큰 경우)는 재시작 수만큼 예산이
+# 쪼개지면 세대(generation)를 충분히 못 돌고 조기 종료될 수 있어, 기본값을 180초/재시작 2회로
+# 올려 재시작당 최소 90초를 확보한다. gaWallClockS/gaRestarts로 화면에서 사용자가 직접 조정 가능.
 POP_SIZE_FREE = 60
 MIN_GENERATIONS = 30
 PLATEAU_LIMIT = 15
 MAX_GENERATIONS = 150
-WALL_CLOCK_BUDGET_S = 90.0
+WALL_CLOCK_BUDGET_S = 180.0
 MUTATION_RATE = 0.35
 BIG_JUMP_RATE = 0.08
 
@@ -1584,12 +1598,6 @@ BIG_JUMP_RATE = 0.08
 # 그 "좋은 배치 구조"를 후속 세대의 교차·변이 재료로 계속 활용하지 못해 탐색 효율이 떨어진다 —
 # 표준적인 GA 개선 기법).
 ELITE_COUNT = 2
-
-# 특정 조합을 선택했을 때, 그 조합만으로(순수 라운드) 달성한 용적률이 목표(far_cap_target)의
-# 이 비율에 못 미치면 다른 조합을 섞은 2차 라운드를 추가로 돌린다. 이 비율을 넘겼으면 —
-# 이미 법정 용적률을 충분히 활용하고 있다는 뜻이므로 — 혼합 없이 순수 조합 결과를 그대로 쓴다.
-FAR_MIX_TRIGGER_RATIO = 0.9
-
 
 def run_ga_search(poly_m, envelope_edges, to_m, pack_params, legal_bcr_max, far_cap_target,
                    land_area, max_floors_cap, rng,
@@ -1782,17 +1790,19 @@ def _run_ga_restarts(poly_m, envelope_edges, to_m, pack_params, legal_bcr_max, f
 
 def optimize_massing(buildable_envelope_geojson, envelope_edges, request_params, progress_callback=None):
     """
-    Step 5 오케스트레이터: 화면에서 조합(comboMode)을 하나 선택했으면 그 조합 위주로,
-    'auto'(또는 미선택)면 9종을 자유롭게 섞어 run_ga_search를 실행한다. 결과 품질(최대
-    용적률)을 우선해 GA를 GA_RESTARTS번 독립적으로 재시작하고(예산은 재시작 수만큼 나눠
-    쓴다), 그중 세대수가 가장 높은 배치를 최종 채택한다 — 재시작마다 초기 개체군이 달라
-    지역 최적해에 갇히는 것을 줄인다.
+    Step 5 오케스트레이터: 화면에서 사용자가 도형을 보고 다중선택한 조합들(comboModes,
+    9종 카탈로그의 부분집합 — 예전 '자동' 옵션은 없고, 화면이 항상 1개 이상을 보낸다)만
+    배치 후보로 삼아 run_ga_search를 실행한다. 허용된 조합이 여러 개여도 GA는 유전자마다
+    그중 하나를 "지배 조합"으로 골라 대체로 반복 사용하고(_random_genome의
+    dominantComboKey — 실제 설계 사례처럼 한 배치안 안에서는 형태가 섞이지 않는 경향을
+    만든다), 개체군 전체는 서로 다른 지배 조합을 동시에 시도해 그중 세대수가 가장 높은
+    쪽으로 자연히 수렴한다 — 그래서 여러 조합을 골라도 "허용된 조합 안에서 자유롭게
+    섞어 실제로 배치해낸다"는 요구사항이 별도의 순수/혼합 2라운드 없이 한 번의 탐색으로
+    충족된다. 결과 품질(최대 용적률)을 우선해 GA를 GA_RESTARTS번 독립적으로 재시작하고
+    (예산은 재시작 수만큼 나눠 쓴다), 그중 세대수가 가장 높은 배치를 최종 채택한다 —
+    재시작마다 초기 개체군이 달라 지역 최적해에 갇히는 것을 줄인다.
 
-    progress_callback(선택)이 있으면 _run_ga_restarts가 보고하는 세대별 정보에 phase
-    ('pure'|'mixed')를 덧붙여 전달한다 — 화면의 진행률 표시가 "1차 순수조합 탐색"인지
-    "2차 혼합 탐색"인지 구분해서 보여줄 수 있게 한다. comboMode가 'auto'이거나 2차 라운드가
-    아예 필요 없는 경우(순수 결과만으로 목표 용적률에 충분히 도달) phase='mixed' 이벤트는
-    전혀 발생하지 않을 수 있다 — 화면 쪽은 이걸 미리 "총 2단계"로 가정하면 안 된다.
+    progress_callback(선택)이 있으면 _run_ga_restarts가 보고하는 세대별 정보를 그대로 전달한다.
     """
     land_area = num(request_params.get('landArea'))
     if land_area <= 0:
@@ -1805,9 +1815,20 @@ def optimize_massing(buildable_envelope_geojson, envelope_edges, request_params,
     if not poly_m or len(poly_m) < 3:
         return {'error': 'invalid envelope', 'rows': [], 'maxRows': 0, 'noFit': True}
 
-    combo_mode = request_params.get('comboMode') or 'auto'
-    primary_combo_key = combo_mode if combo_mode in UNIT_COMBO_BUILDERS else None
-    combo_mode_label = UNIT_COMBO_DISPLAY_NAMES.get(primary_combo_key, '자동(혼합)')
+    # comboModes: 화면에서 도형을 보고 다중선택한 조합 목록(9종 카탈로그의 부분집합).
+    # 유효하지 않은 값은 걸러내고, 비어 있으면(구버전 호출부·요청 누락 등에 대한 방어적
+    # 폴백일 뿐 — 화면은 항상 1개 이상을 보낸다) 9종 전체를 허용한다.
+    requested_combo_modes = request_params.get('comboModes')
+    if isinstance(requested_combo_modes, list):
+        allowed_combo_keys = [k for k in requested_combo_modes if k in UNIT_COMBO_BUILDERS]
+    else:
+        allowed_combo_keys = []
+    if not allowed_combo_keys:
+        allowed_combo_keys = list(UNIT_COMBO_KEYS)
+    combo_mode_label = (
+        '/'.join(UNIT_COMBO_DISPLAY_NAMES.get(k, k) for k in allowed_combo_keys)
+        if len(allowed_combo_keys) < len(UNIT_COMBO_KEYS) else '9종 조합 자유 혼합'
+    )
 
     legal_bcr_max = num(request_params.get('legalBcrMax')) or 60
     legal_far_max = num(request_params.get('legalFarMax')) or 250
@@ -1842,7 +1863,12 @@ def optimize_massing(buildable_envelope_geojson, envelope_edges, request_params,
         'bldgDepth': num(request_params.get('standardBuildingDepth')) or 10,
         'unitWidth': base_unit_width,
         'core': num(request_params.get('coreWidth')) or 10,
-        'primaryComboKey': primary_combo_key,
+        # primaryComboKey는 이제 쓰지 않는다(다중선택은 "이 조합들 안에서만" 이라는 하드
+        # 제약이지, "이 조합 하나를 우선하되 부족하면 그 밖도 허용"이라는 예전의 소프트
+        # 편향과 다르다) — allowedComboKeys가 그 하드 제약이고, 그 안에서 어느 조합을
+        # 우선할지는 유전자별 dominantComboKey가 자연 선택으로 결정한다.
+        'primaryComboKey': None,
+        'allowedComboKeys': allowed_combo_keys,
         'unitTypeList': unit_type_list_scaled,
         'h1Mm': request_params.get('floorHeight1Mm'), 'h2Mm': request_params.get('floorHeight2Mm'),
         'h3Mm': request_params.get('floorHeight3Mm'), 'htypMm': request_params.get('floorHeightTypicalMm'),
@@ -1855,52 +1881,25 @@ def optimize_massing(buildable_envelope_geojson, envelope_edges, request_params,
     }
 
     seed_val = int(num(request_params.get('gaSeed'))) or None
-    ga_restarts = max(1, int(num(request_params.get('gaRestarts')) or 3))
+    ga_restarts = max(1, int(num(request_params.get('gaRestarts')) or 2))
     wall_clock_budget_s = num(request_params.get('gaWallClockS')) or WALL_CLOCK_BUDGET_S  # 테스트용 오버라이드
 
     t0_total = time.time()
 
-    # 순수/혼합 두 라운드와 재시작 전체가 같은 대지(poly_m/envelope_edges)·같은 카탈로그·같은
-    # pack_params(높이·폭 등 — comboBias만 라운드마다 다름)를 쓰므로, 동 하나의 평가 결과는
-    # 어느 라운드/재시작에서 다시 만나든 항상 같다 — 이 호출 전체에서 딱 한 번만 만들어 계속
-    # 공유하면(세대·재시작·라운드에 걸쳐), 같은 동을 다시 볼 때마다 가장 비싼 계산(유닛별
-    # shapely 컨테인먼트·병합)을 건너뛸 수 있다(대형 대지에서 세대당 평가 시간이 예산을
-    # 지배해 최소 세대수도 못 채우던 문제의 근본 원인이었음 — 실측 확인됨).
     shared_envelope_cache = {}
     shared_building_cache = {}
 
-    # 1차: comboBias=1.0(순수 그 조합만, primary_combo_key가 없으면 어차피 무의미해 처음부터 자유
-    # 혼합) — "한 조합 위주로 배치"가 GA의 세대수 우선 적합도에 밀려 조기에 다른 조합으로
-    # 대체되지 않도록, 아예 섞을 여지 자체를 주지 않는 라운드를 먼저 돌린다.
-    pure_pack_params = {**base_pack_params, 'comboBias': 1.0}
-    pure_progress_cb = None
-    if progress_callback is not None:
-        def pure_progress_cb(info):
-            progress_callback({**info, 'phase': 'pure'})
+    # allowedComboKeys(하드 제약)는 이미 base_pack_params에 들어 있고, 그 안에서 어느 조합을
+    # 우선할지는 유전자별 dominantComboKey가 세대를 거치며 자연 선택으로 정하므로(V1, 위
+    # docstring 참고) 예전처럼 "순수 라운드 → 부족하면 혼합 라운드"를 따로 나눌 필요가 없다
+    # — comboBias는 항상 DOMINANT_COMBO_BIAS_AUTO(유전자 내부 순도 유지용)로 고정하고 한
+    # 번만 탐색한다.
+    search_pack_params = {**base_pack_params, 'comboBias': DOMINANT_COMBO_BIAS_AUTO}
     candidates, per_restart_stats = _run_ga_restarts(
-        poly_m, envelope_edges, to_m, pure_pack_params, legal_bcr_max, far_cap_target,
+        poly_m, envelope_edges, to_m, search_pack_params, legal_bcr_max, far_cap_target,
         land_area, max_floors_cap, seed_val, ga_restarts, wall_clock_budget_s,
-        envelope_cache=shared_envelope_cache, building_cache=shared_building_cache, progress_callback=pure_progress_cb
+        envelope_cache=shared_envelope_cache, building_cache=shared_building_cache, progress_callback=progress_callback
     )
-
-    # 2차(필요시만): 순수 조합 결과가 없거나 법정 용적률 목표(far_cap_target)의 FAR_MIX_TRIGGER_RATIO에도
-    # 못 미치면, 그 조합 위주(PRIMARY_COMBO_BIAS)로 다른 조합을 섞은 라운드를 추가로 돌려 후보에 더한다.
-    if primary_combo_key:
-        best_pure = max(candidates, key=lambda c: c['effectiveScore']) if candidates else None
-        far_utilization = (best_pure['achievedFar'] / far_cap_target) if (best_pure and far_cap_target > 0) else 0.0
-        if best_pure is None or far_utilization < FAR_MIX_TRIGGER_RATIO:
-            mixed_pack_params = {**base_pack_params, 'comboBias': PRIMARY_COMBO_BIAS}
-            mixed_progress_cb = None
-            if progress_callback is not None:
-                def mixed_progress_cb(info):
-                    progress_callback({**info, 'phase': 'mixed'})
-            mixed_candidates, mixed_stats = _run_ga_restarts(
-                poly_m, envelope_edges, to_m, mixed_pack_params, legal_bcr_max, far_cap_target,
-                land_area, max_floors_cap, seed_val, ga_restarts, wall_clock_budget_s,
-                envelope_cache=shared_envelope_cache, building_cache=shared_building_cache, progress_callback=mixed_progress_cb
-            )
-            candidates += mixed_candidates
-            per_restart_stats += mixed_stats
 
     total_elapsed_ms = round((time.time() - t0_total) * 1000)
     search_stats = {

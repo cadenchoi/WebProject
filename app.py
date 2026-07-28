@@ -573,16 +573,16 @@ def optimize_massing():
     유전 알고리즘(GA)으로 위치·회전각·조합·유닛별 층수를 함께 탐색해 법정 건폐율/용적률
     상한을 넘지 않으면서 용적률을 가장 많이 활용하는 배치를 찾는다. 목표 세대수는 참고하지
     않고 이 대지의 법정 최대 수용력을 새로 산출한다. 주동 형상은 참조 이미지의 9종 조합
-    (2호~6호)만 쓴다 — comboMode로 그중 하나를 고르면 그 조합 위주로, 'auto'(또는 미선택)면
-    9종을 자유롭게 섞어 배치한다(용적률·인동채광 요건을 채우기 위해 필요하면 자동으로
-    다른 조합을 섞는다).
+    (2호~6호)만 쓴다 — comboModes로 화면에서 도형을 보고 다중선택한 조합 목록을 보내면
+    그 안에서만 배치한다(빈 배열/누락 시에는 9종 전체를 허용하는 방어적 폴백).
 
     POST body: buildableEnvelope, envelopeEdges, unitTypeList, standardBuildingDepth,
-    standardUnitWidth, coreWidth, comboMode('auto' 또는 2호/3호/4호-a/4호-b/4호-c/4호-d/
-    5호-a/5호-b/6호), northSetbackRatio, buildingGapRatio,
+    standardUnitWidth, coreWidth, comboModes(배열, 2호/3호/4호-a/4호-b/4호-c/4호-d/
+    5호-a/5호-b/6호 중 1개 이상), northSetbackRatio, buildingGapRatio,
     floorHeight1~3Mm/floorHeightTypicalMm, landArea, legalBcrMax, legalFarMax,
     relaxedFarLimit, avgFarAreaPerHousehold, maxFloorsCap(optional), gaRestarts(optional,
-    기본 3), gaSeed(optional)
+    기본 2), gaWallClockS(optional, 탐색 시간 예산 초 단위, 기본 180 — 재시작 수만큼 나눠 씀),
+    gaSeed(optional)
     """
     body = request.get_json()
     if not body or 'buildableEnvelope' not in body:

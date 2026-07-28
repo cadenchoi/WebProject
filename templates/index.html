@@ -18,7 +18,7 @@
   {% endif %}
 
   <!-- Custom CSS -->
-  <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}?v=22">
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}?v=26">
 </head>
 <body>
 
@@ -159,6 +159,11 @@
               <input type="number" id="local-parking-ratio" class="field-input" placeholder="법정 최소기준 자동입력" step="0.01" min="0">
             </div>
           </div>
+          <p class="field-hint" id="ordinance-check-links" style="display:none;">
+            <i class="fa-solid fa-circle-info"></i> 자동입력값은 참고치일 수 있습니다 —
+            <a href="#" id="link-building-ordinance" target="_blank" rel="noopener">건축조례(조경) 확인</a> ·
+            <a href="#" id="link-parking-ordinance" target="_blank" rel="noopener">주차장조례 확인</a>
+          </p>
         </div>
       </div>
 
@@ -484,25 +489,16 @@
               <input type="number" id="local-adjacent-setback" class="field-input" placeholder="1.5" step="0.5" min="0" max="10">
             </div>
           </div>
-          <div class="field-row-2">
-            <div class="field-group">
-              <label class="field-label" for="core-width">코어 폭 (m)<span class="optional-tag">기본 10m</span></label>
-              <input type="number" id="core-width" class="field-input" placeholder="10" step="0.5" min="5" max="20">
-            </div>
-            <div class="field-group">
-              <label class="field-label" for="combo-mode">조합 선택<span class="optional-tag">특정 조합 선택시 그 조합 위주로 배치, 용적률·인동채광 부족시 자동으로 다른 조합 혼합</span></label>
-              <select id="combo-mode" class="field-select">
-                <option value="auto" selected>자동 (9종 조합 혼합, 용적률 최대 채택)</option>
-                <option value="2호">2호(판상형)</option>
-                <option value="3호">3호(타워형)</option>
-                <option value="4호-a">4호(L형)</option>
-                <option value="4호-b">4호(타워형)</option>
-                <option value="4호-c">4호(판상형)</option>
-                <option value="4호-d">4호(ㄱ형)</option>
-                <option value="5호-a">5호(L형)</option>
-                <option value="5호-b">5호(타워형)</option>
-                <option value="6호">6호(타워형)</option>
-              </select>
+          <div class="field-group">
+            <label class="field-label" for="core-width">코어 폭 (m)<span class="optional-tag">기본 10m</span></label>
+            <input type="number" id="core-width" class="field-input" placeholder="10" step="0.5" min="5" max="20">
+          </div>
+
+          <!-- 조합 선택: 배치에 사용할 주동 유형(모양) 다중 선택 -->
+          <div class="field-group">
+            <label class="field-label">조합 선택<span class="optional-tag">최소 1개 이상 — 도형을 보고 배치에 쓸 주동 유형을 고르세요</span></label>
+            <div class="combo-picker-grid" id="combo-picker-grid">
+              <!-- JS(renderComboPicker)가 9개 카드를 채운다 -->
             </div>
           </div>
 
@@ -540,6 +536,17 @@
 
           <!-- 정밀 최적화 (Python/Shapely, 회전각·층수 전수 탐색으로 법정 최대 수용력 산출) -->
           <div class="legal-mini-card" id="optimize-massing-card" style="margin-top:8px;">
+            <div class="field-row-2" style="margin-bottom:8px;">
+              <div class="field-group">
+                <label class="field-label" for="ga-wall-clock-s">탐색 시간 예산 (초)<span class="optional-tag">기본 180 — 클수록 결과 품질↑ 소요시간↑</span></label>
+                <input type="number" id="ga-wall-clock-s" class="field-input" placeholder="180" step="30" min="30" max="600">
+              </div>
+              <div class="field-group">
+                <label class="field-label" for="ga-restarts">재시작 횟수<span class="optional-tag">기본 2 — 예산을 이 수만큼 나눠 씀</span></label>
+                <input type="number" id="ga-restarts" class="field-input" placeholder="2" step="1" min="1" max="5">
+              </div>
+            </div>
+            <p class="field-hint"><i class="fa-solid fa-circle-info"></i> 대지가 복잡해(동 수가 많아) 세대(generation)가 목표치보다 적게 돈다면, 재시작 횟수를 줄이거나 시간 예산을 늘려보세요.</p>
             <div class="field-group" style="margin-bottom:8px;">
               <label class="field-label" style="display:flex; align-items:center; gap:8px; cursor:pointer;">
                 <input type="checkbox" id="allow-over-50-floors" style="width:auto;">
@@ -1026,9 +1033,9 @@
 </div>
 
 <!-- JS 모듈 로드 순서 중요: zones → calculator → map → main -->
-<script src="{{ url_for('static', filename='js/zones.js') }}?v=22"></script>
-<script src="{{ url_for('static', filename='js/calculator.js') }}?v=22"></script>
-<script src="{{ url_for('static', filename='js/map.js') }}?v=22"></script>
-<script src="{{ url_for('static', filename='js/main.js') }}?v=22"></script>
+<script src="{{ url_for('static', filename='js/zones.js') }}?v=26"></script>
+<script src="{{ url_for('static', filename='js/calculator.js') }}?v=26"></script>
+<script src="{{ url_for('static', filename='js/map.js') }}?v=26"></script>
+<script src="{{ url_for('static', filename='js/main.js') }}?v=26"></script>
 </body>
 </html>
