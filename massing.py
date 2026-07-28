@@ -1532,12 +1532,22 @@ def _crossover_genomes(p1, p2, rng):
     return {'rotationDeg': rotation % 180, 'typicalFloors': typical_floors, 'dominantComboKey': dominant_combo_key, 'buildings': buildings}
 
 
+def _unit_size_label(unit_type):
+    """유닛 라벨 첫 줄 — 전용면적을 "84㎡" 형태로 표기한다(84.99㎡ → 84㎡: 소수점 절사가
+    국내 평형 표기 관행). 전용면적이 안 넘어오는 구버전 호출부에서는 세대타입 이름으로
+    폴백한다. calculator.js unitSizeLabelText와 같은 규칙."""
+    area_ex = num(unit_type.get('exclusiveArea'))
+    if area_ex > 0:
+        return f"{int(area_ex)}㎡"
+    return unit_type.get('name') or '유닛'
+
+
 def _unit_label_text(unit_type, floors_u):
-    """유닛 하나짜리 라벨 — "타입\n층수" 두 줄만 표시한다. 동 수가 많은 대지에서는 한 줄짜리
-    긴 라벨("59타입 24평 · 20층")이 서로 겹쳐 읽을 수 없었기 때문에(사용자 피드백), 공급면적
-    평수는 빼고 두 줄로 나눠 라벨 폭을 절반 이하로 줄인다(평수는 상단 요약·면적표에 이미 있음).
-    개행은 map.js가 white-space:pre-line으로 렌더링한다."""
-    return f"{unit_type['name']}\n{floors_u}층"
+    """유닛 하나짜리 라벨 — "전용면적\n층수" 두 줄만 표시한다. 동 수가 많은 대지에서는 한 줄짜리
+    긴 라벨("59타입 24평 · 20층")이 서로 겹쳐 읽을 수 없었기 때문에(사용자 피드백), 두 줄로 나눠
+    라벨 폭을 절반 이하로 줄인다(공급 평수는 상단 요약·면적표에 이미 있음).
+    개행은 map.js가 유닛 안 두 줄 텍스트로 렌더링한다."""
+    return f"{_unit_size_label(unit_type)}\n{floors_u}F"
 
 
 def genome_result_to_rows(result, pack_params):

@@ -666,10 +666,21 @@ async function fetchOptimizeMassingStatus(jobId) {
   }
 }
 
+/** 유닛 라벨("전용면적\n층수")을 유닛 박스 안에 얹을 두 줄 HTML로 만든다.
+ *  첫 줄(면적)은 크고 진하게, 둘째 줄(층수)은 조금 작게 벽돌색으로 — 스타일은 style.css
+ *  .unit-label. 세대타입 이름이 그대로 들어올 수 있어(사용자 입력) HTML 이스케이프한다. */
+function unitLabelHtml(text) {
+  const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+  const [sizeLine, ...rest] = String(text || '').split('\n');
+  const floorLine = rest.join(' ');
+  return `<div class="unit-label"><span class="ul-size">${esc(sizeLine)}</span>` +
+         (floorLine ? `<span class="ul-floors">${esc(floorLine)}</span>` : '') + `</div>`;
+}
+
 /**
  * calculator.js의 layoutInfo를 받아 개략 주동 형상을 카카오맵 단지 표기 스타일로 지도에 표시한다.
  * layoutInfo.rows[].segments가 있으면 동마다 세대수만큼 균등분할한 유닛 박스를(코어 구분 없이)
- * 옅은 단색 배경 + 얇은 테두리로 그리고, 동 중앙에 "평형타입 공급면적평" 라벨을 표시한다.
+ * 옅은 단색 배경 + 얇은 테두리로 그리고, 유닛 박스 안에 "전용면적 / 층수"(예: 84㎡ / 24F)를 얹는다.
  * segments가 없으면(폴백) 건물 외곽만, 그마저 없으면(바운딩박스 폴백 경로) 단순 사각형을 그린다.
  * 실제 매싱 설계가 아닌 개략 근사치 — 시각화용.
  */
@@ -699,9 +710,10 @@ function drawLayoutPreview(bbox, layoutInfo) {
       (row.buildingLabels || []).forEach(bl => {
         const label = new kakao.maps.CustomOverlay({
           position: new kakao.maps.LatLng(bl.positionLL[1], bl.positionLL[0]),
-          // 라벨 텍스트는 "타입\n층수" 두 줄 — pre-line으로 개행을 살려 렌더링한다(한 줄짜리
-          // 긴 라벨은 동이 많은 대지에서 서로 겹쳐 읽을 수 없었다).
-          content: `<div style="background:rgba(255,255,255,0.92);color:#7c2d12;font-size:11px;font-weight:600;line-height:1.25;padding:1px 5px;border-radius:3px;white-space:pre-line;text-align:center;border:1px solid #b45309;">${bl.text}</div>`,
+          // 라벨 텍스트는 "전용면적\n층수" 두 줄(예: "84㎡\n24F") — 줄마다 다른 크기·색으로
+          // 그려야 하므로 pre-line 대신 개행에서 잘라 두 span으로 만든다. 위치는 유닛 중심
+          // (massing.py가 유닛마다 centerM을 보낸다)이라 유닛 박스 안에 얹힌다.
+          content: unitLabelHtml(bl.text),
           yAnchor: 0.5
         });
         label.setMap(kakaoMap);

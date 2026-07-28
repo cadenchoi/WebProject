@@ -163,6 +163,14 @@ function peekNextUnitType(unitTypeList, assignedCounts) {
   return unitTypeList[peekNextUnitTypeIndex(unitTypeList, assignedCounts)];
 }
 
+/** 지도 유닛 라벨 첫 줄 — 전용면적을 "84㎡" 형태로 표기한다(84.99㎡ → 84㎡: 소수점 절사가
+ *  국내 평형 표기 관행). 전용면적을 모르면 세대타입 이름으로 폴백한다.
+ *  massing.py _unit_size_label과 같은 규칙(개략/정밀 두 경로의 라벨 표기를 일치시킨다). */
+function unitSizeLabelText(unitType) {
+  const areaEx = Number(unitType && unitType.exclusiveArea) || 0;
+  return areaEx > 0 ? `${Math.floor(areaEx)}㎡` : ((unitType && unitType.name) || '유닛');
+}
+
 /**
  * 세대타입별로 "공급면적 비례 세대 폭"을 계산해 붙인다. 표준 세대 폭(baseUnitWidth)은
  * 전체 세대의 평균 공급면적 기준으로 이미 스케일된 값이므로, 각 타입은 자신의 공급면적이
@@ -433,12 +441,12 @@ function estimateComboLayout(poly, lat0, stackDir, widthDir, { bldgDepth, buildi
       const ysAll = found.units.flatMap(u => u.corners.map(c => c[1]));
       const bboxMinX = Math.min(...xsAll), bboxMaxX = Math.max(...xsAll);
       const bboxMinY = Math.min(...ysAll), bboxMaxY = Math.max(...ysAll);
-      // 라벨은 "타입\n층수" 두 줄만 표시한다(조합 표기는 상단 요약의 "호수:" 목록에, 공급면적
+      // 라벨은 "전용면적\n층수" 두 줄만 표시한다(조합 표기는 상단 요약의 "호수:" 목록에, 공급면적
       // 평수는 면적표에 이미 나옴 — 한 줄짜리 긴 라벨은 동이 많으면 서로 겹쳐 못 읽는다).
       // 층수는 이 시점엔 아직 모르므로(요구 세대수를 채울 때까지 필요층수를 바깥에서 반복 탐색)
-      // stampFloorCountOnLabels(main.js)가 나중에 "\nN층"을 붙인다.
+      // stampFloorCountOnLabels(main.js)가 나중에 "\nNF"를 붙인다.
       const buildingLabels = [{
-        text: unitType.name,
+        text: unitSizeLabelText(unitType),
         positionLL: metersToLL(toWorld((bboxMinX + bboxMaxX) / 2, (bboxMinY + bboxMaxY) / 2), lat0)
       }];
       const outlineLocal = [[bboxMinX, bboxMinY], [bboxMaxX, bboxMinY], [bboxMaxX, bboxMaxY], [bboxMinX, bboxMaxY]];
@@ -1183,7 +1191,8 @@ function calculate(inputs) {
           northSetbackRatio, buildingGapRatio: effectiveBuildingGapRatio, applyNorthSetback,
           standardBuildingDepth: scaledBuildingDepth, standardUnitWidth: scaledUnitWidth,
           comboModes, landArea, legalBcrMax,
-          unitTypeList: unitResults.filter(t => t.count > 0).map(t => ({ name: t.name, supplyArea: t.supplyArea, count: t.count }))
+          unitTypeList: unitResults.filter(t => t.count > 0)
+            .map(t => ({ name: t.name, supplyArea: t.supplyArea, exclusiveArea: t.areaEx, count: t.count }))
         });
       } else if (siteDimensions && siteDimensions.widthEW > 0 && siteDimensions.depthNS > 0 && totalHouseholds > 0) {
         // ② 폴백: 바운딩박스 근사 (건축가능영역 폴리곤이 없을 때)
