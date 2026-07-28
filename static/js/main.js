@@ -859,10 +859,11 @@ function updateLayoutSimCard(r) {
   }
 }
 
-/** 지도에 그리기 직전, 각 동 라벨 끝에 "· N층"을 붙인다(JS 개략/Python 최적화 결과 공통 사용). */
+/** 지도에 그리기 직전, 각 동 라벨에 층수를 둘째 줄로 붙인다(JS 개략/Python 최적화 결과 공통 사용).
+ *  라벨은 "타입\n층수" 두 줄 형식 — map.js가 white-space:pre-line으로 렌더링한다. */
 function stampFloorCountOnLabels(layoutInfo, floors) {
   if (!layoutInfo || !floors || !Array.isArray(layoutInfo.rows)) return;
-  const suffix = ` · ${floors}층`;
+  const suffix = `\n${floors}층`;
   layoutInfo.rows.forEach(row => {
     (row.buildingLabels || []).forEach(bl => {
       if (!bl.text.endsWith(suffix)) bl.text += suffix;

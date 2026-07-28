@@ -699,7 +699,9 @@ function drawLayoutPreview(bbox, layoutInfo) {
       (row.buildingLabels || []).forEach(bl => {
         const label = new kakao.maps.CustomOverlay({
           position: new kakao.maps.LatLng(bl.positionLL[1], bl.positionLL[0]),
-          content: `<div style="background:rgba(255,255,255,0.92);color:#7c2d12;font-size:11px;font-weight:600;padding:1px 5px;border-radius:3px;white-space:nowrap;border:1px solid #b45309;">${bl.text}</div>`,
+          // 라벨 텍스트는 "타입\n층수" 두 줄 — pre-line으로 개행을 살려 렌더링한다(한 줄짜리
+          // 긴 라벨은 동이 많은 대지에서 서로 겹쳐 읽을 수 없었다).
+          content: `<div style="background:rgba(255,255,255,0.92);color:#7c2d12;font-size:11px;font-weight:600;line-height:1.25;padding:1px 5px;border-radius:3px;white-space:pre-line;text-align:center;border:1px solid #b45309;">${bl.text}</div>`,
           yAnchor: 0.5
         });
         label.setMap(kakaoMap);

@@ -429,16 +429,16 @@ function estimateComboLayout(poly, lat0, stackDir, widthDir, { bldgDepth, buildi
         type: 'unit',
         pathLL: u.corners.map(([lx, ly]) => metersToLL(toWorld(lx, ly), lat0))
       }));
-      const areaPy = unitType.supplyArea > 0 ? Math.round(unitType.supplyArea * 0.3025) : null;
       const xsAll = found.units.flatMap(u => u.corners.map(c => c[0]));
       const ysAll = found.units.flatMap(u => u.corners.map(c => c[1]));
       const bboxMinX = Math.min(...xsAll), bboxMaxX = Math.max(...xsAll);
       const bboxMinY = Math.min(...ysAll), bboxMaxY = Math.max(...ysAll);
-      // 라벨은 유닛 타입과 층수만 표시한다(조합 표기는 상단 요약의 "호수:" 목록에 이미 나옴) —
+      // 라벨은 "타입\n층수" 두 줄만 표시한다(조합 표기는 상단 요약의 "호수:" 목록에, 공급면적
+      // 평수는 면적표에 이미 나옴 — 한 줄짜리 긴 라벨은 동이 많으면 서로 겹쳐 못 읽는다).
       // 층수는 이 시점엔 아직 모르므로(요구 세대수를 채울 때까지 필요층수를 바깥에서 반복 탐색)
-      // stampFloorCountOnLabels(main.js)가 나중에 " · N층"을 붙인다.
+      // stampFloorCountOnLabels(main.js)가 나중에 "\nN층"을 붙인다.
       const buildingLabels = [{
-        text: areaPy ? `${unitType.name} ${areaPy}평` : unitType.name,
+        text: unitType.name,
         positionLL: metersToLL(toWorld((bboxMinX + bboxMaxX) / 2, (bboxMinY + bboxMaxY) / 2), lat0)
       }];
       const outlineLocal = [[bboxMinX, bboxMinY], [bboxMaxX, bboxMinY], [bboxMaxX, bboxMaxY], [bboxMinX, bboxMaxY]];

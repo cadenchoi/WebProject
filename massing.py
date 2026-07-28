@@ -1533,10 +1533,11 @@ def _crossover_genomes(p1, p2, rng):
 
 
 def _unit_label_text(unit_type, floors_u):
-    """유닛 하나짜리 라벨 — 유닛의 타입과 그 유닛 고유의 층수만 표시한다(그 외 정보 없음)."""
-    area_py = round(num(unit_type.get('supplyArea')) * 0.3025) if num(unit_type.get('supplyArea')) > 0 else None
-    base = f"{unit_type['name']} {area_py}평" if area_py else unit_type['name']
-    return f"{base} · {floors_u}층"
+    """유닛 하나짜리 라벨 — "타입\n층수" 두 줄만 표시한다. 동 수가 많은 대지에서는 한 줄짜리
+    긴 라벨("59타입 24평 · 20층")이 서로 겹쳐 읽을 수 없었기 때문에(사용자 피드백), 공급면적
+    평수는 빼고 두 줄로 나눠 라벨 폭을 절반 이하로 줄인다(평수는 상단 요약·면적표에 이미 있음).
+    개행은 map.js가 white-space:pre-line으로 렌더링한다."""
+    return f"{unit_type['name']}\n{floors_u}층"
 
 
 def genome_result_to_rows(result, pack_params):
